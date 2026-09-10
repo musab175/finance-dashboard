@@ -15,6 +15,13 @@ export class FinanceDashboard extends Component {
             hasLoadedOnce: false,
             error: null,
             data: {},
+            derived: {
+                currentPoints: "",
+                previousPoints: "",
+                axisLabels: [],
+                yLabels: [],
+                categoryGradient: "background: #e4e1e6;",
+            },
             reportDate: null,
             period: "month",
             showFilters: false,
@@ -39,6 +46,7 @@ export class FinanceDashboard extends Component {
                 return;
             }
             this.state.data = data;
+            this.state.derived = this._computeDerived(data);
             this.state.reportDate = data.report_date_iso;
             this.state.period = data.period;
         } catch (error) {
@@ -146,31 +154,50 @@ export class FinanceDashboard extends Component {
         return favorable ? "md-positive" : "md-negative";
     }
 
-    chartPoints(values = []) {
+    // Chart geometry (SVG polyline points, axis ticks, donut gradient) used
+    // to be recomputed from scratch on every render, including the
+    // loading -> data -> !loading sequence of a single loadData() call.
+    // It's now derived once per successful fetch (see _computeDerived,
+    // called from loadData) and read from state.derived by the template.
+
+    _computeDerived(data) {
+        const chart = data.sales_chart || {};
+        const currentValues = (chart.current || []).map(Number);
+        const previousValues = (chart.previous || []).map(Number);
+        const labels = chart.labels || [];
+        const allValues = [...currentValues, ...previousValues, 0];
+        const minimum = Math.min(...allValues);
+        const maximum = Math.max(...allValues);
+
+        return {
+            currentPoints: this._chartPointsFor(currentValues, minimum, maximum),
+            previousPoints: this._chartPointsFor(previousValues, minimum, maximum),
+            axisLabels: this._chartAxisLabelsFor(labels),
+            yLabels: [
+                { value: maximum, y: 28 },
+                { value: (maximum + minimum) / 2, y: 113 },
+                { value: minimum, y: 198 },
+            ],
+            categoryGradient: this._categoryGradientFor(data.sales_by_category || []),
+        };
+    }
+
+    _chartPointsFor(values, minimum, maximum) {
         if (!values.length) {
             return "";
         }
-        const chart = this.state.data.sales_chart || {};
-        const allValues = [
-            ...(chart.current || []),
-            ...(chart.previous || []),
-            0,
-        ].map(Number);
-        const minimum = Math.min(...allValues);
-        const maximum = Math.max(...allValues);
         const range = maximum - minimum || 1;
         const width = 495;
         return values.map((value, index) => {
             const x = 45 + (values.length === 1
                 ? 0
                 : (index / (values.length - 1)) * width);
-            const y = 195 - ((Number(value) - minimum) / range) * 170;
+            const y = 195 - ((value - minimum) / range) * 170;
             return `${x.toFixed(1)},${y.toFixed(1)}`;
         }).join(" ");
     }
 
-    chartAxisLabels() {
-        const labels = this.state.data.sales_chart?.labels || [];
+    _chartAxisLabelsFor(labels) {
         if (!labels.length) {
             return [];
         }
@@ -186,23 +213,18 @@ export class FinanceDashboard extends Component {
         }));
     }
 
-    chartYLabels() {
-        const chart = this.state.data.sales_chart || {};
-        const values = [
-            ...(chart.current || []),
-            ...(chart.previous || []),
-            0,
-        ].map(Number);
-        if (!values.length) {
-            return [];
+    _categoryGradientFor(categories) {
+        if (!categories.length) {
+            return "background: #e4e1e6;";
         }
-        const minimum = Math.min(...values);
-        const maximum = Math.max(...values);
-        return [
-            { value: maximum, y: 28 },
-            { value: (maximum + minimum) / 2, y: 113 },
-            { value: minimum, y: 198 },
-        ];
+        let start = 0;
+        const segments = categories.map((category, index) => {
+            const end = start + Number(category.percentage || 0);
+            const segment = `${this.categoryColor(index)} ${start}% ${end}%`;
+            start = end;
+            return segment;
+        });
+        return `background: conic-gradient(${segments.join(", ")});`;
     }
 
     formatCompact(value) {
@@ -218,21 +240,6 @@ export class FinanceDashboard extends Component {
 
     categoryColor(index) {
         return this.categoryColors()[index % this.categoryColors().length];
-    }
-
-    categoryGradient() {
-        const categories = this.state.data.sales_by_category || [];
-        if (!categories.length) {
-            return "background: #e4e1e6;";
-        }
-        let start = 0;
-        const segments = categories.map((category, index) => {
-            const end = start + Number(category.percentage || 0);
-            const segment = `${this.categoryColor(index)} ${start}% ${end}%`;
-            start = end;
-            return segment;
-        });
-        return `background: conic-gradient(${segments.join(", ")});`;
     }
 }
 

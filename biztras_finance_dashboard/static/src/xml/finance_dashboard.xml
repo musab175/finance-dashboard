@@ -189,16 +189,16 @@
                               x2="580" y2="145"/>
 
                         <polyline class="md-budget-line"
-                            t-att-points="chartPoints(state.data.sales_chart?.previous)"/>
+                            t-att-points="state.derived.previousPoints"/>
 
                         <polyline class="md-actual-line"
-                            t-att-points="chartPoints(state.data.sales_chart?.current)"/>
+                            t-att-points="state.derived.currentPoints"/>
 
-                        <t t-foreach="chartYLabels()" t-as="tick" t-key="tick.y">
+                        <t t-foreach="state.derived.yLabels" t-as="tick" t-key="tick.y">
                             <text x="6" t-att-y="tick.y"
                                   t-esc="formatCompact(tick.value)"/>
                         </t>
-                        <t t-foreach="chartAxisLabels()" t-as="tick" t-key="tick.label">
+                        <t t-foreach="state.derived.axisLabels" t-as="tick" t-key="tick.label">
                             <text t-att-x="tick.x" y="220" text-anchor="middle"
                                   t-esc="tick.label"/>
                         </t>
@@ -211,7 +211,7 @@
                     </div>
 
                     <div class="md-division-content">
-                        <div class="md-donut" t-att-style="categoryGradient()"></div>
+                        <div class="md-donut" t-att-style="state.derived.categoryGradient"></div>
 
                         <div class="md-division-legend">
                             <div t-foreach="state.data.sales_by_category || []"
