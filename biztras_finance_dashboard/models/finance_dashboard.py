@@ -132,18 +132,20 @@ class BiztrasFinanceDashboard(models.AbstractModel):
         other_income = -totals["other_income_raw"]
         operating_expenses = expenses - direct_cost
 
-        # Sales, current and previous period, in one query: raw (date, amount)
-        # rows only, bucketed in Python. This replaces two separate
-        # account.move searches plus every .mapped()/.filtered() call that
-        # used to walk them (each of those was its own round trip).
+        # Sales, current and previous period, in one query: grouped by day
+        # in SQL rather than fetched one row per invoice and summed in
+        # Python. On a busy period (especially period="year", which can
+        # span up to ~2 years of invoices) this cuts the transfer from
+        # "one row per invoice" down to "one row per day that had sales".
         self.env.cr.execute(
             """
-            SELECT invoice_date, amount_total_signed
+            SELECT invoice_date, SUM(amount_total_signed) AS daily_total
             FROM account_move
             WHERE company_id = %(company_id)s
               AND state = 'posted'
               AND move_type IN ('out_invoice', 'out_refund')
               AND invoice_date BETWEEN %(previous_month_start)s AND %(today)s
+            GROUP BY invoice_date
             """,
             {
                 "company_id": company.id,
@@ -155,15 +157,11 @@ class BiztrasFinanceDashboard(models.AbstractModel):
         previous_daily_sales = {}
         for row in self.env.cr.dictfetchall():
             invoice_date = row["invoice_date"]
-            amount = row["amount_total_signed"] or 0.0
+            amount = row["daily_total"] or 0.0
             if month_start <= invoice_date <= today:
-                current_daily_sales[invoice_date] = (
-                    current_daily_sales.get(invoice_date, 0.0) + amount
-                )
+                current_daily_sales[invoice_date] = amount
             elif previous_month_start <= invoice_date <= previous_period_end:
-                previous_daily_sales[invoice_date] = (
-                    previous_daily_sales.get(invoice_date, 0.0) + amount
-                )
+                previous_daily_sales[invoice_date] = amount
 
         mtd_sales = sum(current_daily_sales.values())
         today_sales = current_daily_sales.get(today, 0.0)
