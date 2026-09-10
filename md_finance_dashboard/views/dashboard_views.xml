@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_md_finance_dashboard" model="ir.actions.client">
+        <field name="name">MD Finance Dashboard</field>
+        <field name="tag">md_finance_dashboard.dashboard</field>
+    </record>
+
+    <menuitem
+        id="menu_md_finance_dashboard_root"
+        name="Finance Dashboard"
+        action="action_md_finance_dashboard"
+        sequence="5"
+    />
+</odoo>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_biztras_finance_dashboard" model="ir.actions.client">
+        <field name="name">Biztras Finance Dashboard</field>
+        <field name="tag">biztras_finance_dashboard.dashboard</field>
+    </record>
+
+    <menuitem
+        id="menu_biztras_finance_dashboard_root"
+        name="Biztras Finance Dashboard"
+        action="action_biztras_finance_dashboard"
+        sequence="5"
+    />
+</odoo>

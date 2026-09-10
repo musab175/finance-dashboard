@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="md_finance_dashboard.FinanceDashboard" owl="1">
+        <div class="md-dashboard">
+            <div class="md-dashboard-header">
+                <div>
+                    <h1>MD Finance Dashboard</h1>
+                    <div class="md-live-line">
+                        <span>As of 13 May 2025 10:30 AM</span>
+                        <span class="md-live-dot"></span>
+                        <strong>Live</strong>
+                    </div>
+                </div>
+
+                <div class="md-filters">
+                    <button>13 May 2025</button>
+                    <button>This Month</button>
+                    <span>Compare With</span>
+                    <button>Last Month</button>
+                    <button>Filters</button>
+                    <button title="Refresh">↻</button>
+                </div>
+            </div>
+
+            <div class="md-kpi-grid">
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">🏦 Cash &amp; Bank Balance</div>
+                    <div class="md-kpi-value">AED 2,650,000</div>
+                    <div class="md-positive">+12.5% ↗</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">🛒 Today's Sales</div>
+                    <div class="md-kpi-value">AED 285,500</div>
+                    <div class="md-positive">+8.7% ↗</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">📊 MTD Sales</div>
+                    <div class="md-kpi-value">AED 6,742,300</div>
+                    <div class="md-negative">-5.3% ↘</div>
+                    <div class="md-comparison">vs Budget (AED 7,120,000)</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">◕ Gross Profit %</div>
+                    <div class="md-kpi-value">23.6%</div>
+                    <div class="md-negative">-1.8% ↘</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">ⓢ MTD Net Profit / (Loss)</div>
+                    <div class="md-kpi-value md-negative">AED (59,506)</div>
+                    <div class="md-negative">-135.4% ↘</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">♟ Total Receivables (AR)</div>
+                    <div class="md-kpi-value">AED 3,987,500</div>
+                    <div class="md-negative">+4.6% ↗</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">⚠ 90+ Days Receivable</div>
+                    <div class="md-kpi-value md-negative">AED 1,245,000</div>
+                    <div class="md-negative">+7.2% ↗</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">▣ Total Payables (AP)</div>
+                    <div class="md-kpi-value">AED 2,215,000</div>
+                    <div class="md-positive">-2.8% ↘</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">▤ Expenses vs Budget</div>
+                    <div class="md-kpi-value">AED 1,850,300</div>
+                    <div class="md-negative">+9.3% ↗</div>
+                    <div class="md-comparison">vs Budget (AED 1,690,000)</div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">▦ Working Capital</div>
+                    <div class="md-kpi-value">AED 2,422,500</div>
+                    <div class="md-positive">+6.1% ↗</div>
+                    <div class="md-comparison">vs Last Month</div>
+                </div>
+            </div>
+            <div class="md-analysis-grid">
+                <section class="md-panel md-sales-panel">
+                    <div class="md-panel-title">
+                        <strong>Sales Analysis</strong>
+                        <button>This Month</button>
+                    </div>
+
+                    <div class="md-chart-legend">
+                        <span>AED</span>
+                        <span class="md-actual-key"></span>
+                        <span>Actual Sales</span>
+                        <span class="md-budget-key"></span>
+                        <span>Budget Sales</span>
+                    </div>
+
+                    <svg class="md-line-chart" viewBox="0 0 600 230"
+                         preserveAspectRatio="none">
+                        <line x1="45" y1="20" x2="45" y2="195"/>
+                        <line x1="45" y1="195" x2="580" y2="195"/>
+
+                        <line class="md-grid-line" x1="45" y1="45"
+                              x2="580" y2="45"/>
+                        <line class="md-grid-line" x1="45" y1="95"
+                              x2="580" y2="95"/>
+                        <line class="md-grid-line" x1="45" y1="145"
+                              x2="580" y2="145"/>
+
+                        <polyline class="md-budget-line"
+                            points="45,180 90,168 135,155 180,145
+                                    225,132 270,120 315,108 360,95
+                                    405,83 450,70 495,58 540,45"/>
+
+                        <polyline class="md-actual-line"
+                            points="45,178 90,157 135,142 180,124
+                                    225,127 270,110 315,105 360,78
+                                    405,74 450,48 495,42 540,24"/>
+
+                        <text x="10" y="198">0</text>
+                        <text x="6" y="148">2M</text>
+                        <text x="6" y="98">4M</text>
+                        <text x="6" y="48">6M</text>
+                        <text x="35" y="220">1 May</text>
+                        <text x="125" y="220">3 May</text>
+                        <text x="215" y="220">5 May</text>
+                        <text x="305" y="220">7 May</text>
+                        <text x="395" y="220">9 May</text>
+                        <text x="485" y="220">13 May</text>
+                    </svg>
+                </section>
+
+                <section class="md-panel">
+                    <div class="md-panel-title">
+                        <strong>Sales by Division</strong>
+                    </div>
+
+                    <div class="md-division-content">
+                        <div class="md-donut"></div>
+
+                        <div class="md-division-legend">
+                            <div><i class="md-purple"></i>
+                                <b>HORECA</b><br/>
+                                <span>AED 2,615,000 (38.8%)</span>
+                            </div>
+                            <div><i class="md-green"></i>
+                                <b>Wholesale</b><br/>
+                                <span>AED 2,145,000 (31.8%)</span>
+                            </div>
+                            <div><i class="md-orange"></i>
+                                <b>E-commerce</b><br/>
+                                <span>AED 1,245,000 (18.5%)</span>
+                            </div>
+                            <div><i class="md-blue"></i>
+                                <b>Production</b><br/>
+                                <span>AED 737,300 (10.9%)</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="md-panel">
+                    <div class="md-panel-title">
+                        <strong>P&amp;L Summary (MTD)</strong>
+                    </div>
+
+                    <table class="md-summary-table">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>This Month (AED)</th>
+                                <th>vs Last Month</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Total Sales</td><td>6,742,300</td>
+                                <td class="md-negative">-5.3% ↘</td></tr>
+                            <tr><td>Cost of Goods Sold</td><td>(5,151,400)</td>
+                                <td class="md-negative">-3.2% ↘</td></tr>
+                            <tr><td>Gross Profit</td><td>1,590,900</td>
+                                <td class="md-negative">-8.1% ↘</td></tr>
+                            <tr><td>Gross Profit %</td><td>23.6%</td>
+                                <td class="md-negative">-1.8 pts ↘</td></tr>
+                            <tr><td>Operating Expenses</td><td>(1,650,406)</td>
+                                <td class="md-negative">+9.4% ↗</td></tr>
+                            <tr><td>Other Income</td><td>1,990</td>
+                                <td class="md-positive">+12.2% ↗</td></tr>
+                            <tr class="md-total-row">
+                                <td>Net Profit / (Loss)</td>
+                                <td class="md-negative">(59,506)</td>
+                                <td class="md-negative">-135.4% ↘</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+            </div>
+
+            <div class="md-bottom-grid">
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Top 5 Customers - Overdue</strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr><th>Customer</th><th>Overdue Amount (AED)</th><th>Days</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Cove Beach</td><td>425,000</td><td>120+</td></tr>
+                            <tr><td>Burak Restaurant</td><td>315,000</td><td>90+</td></tr>
+                            <tr><td>Zou Zou Restaurant</td><td>285,000</td><td>90+</td></tr>
+                            <tr><td>Amai Gourmet</td><td>135,000</td><td>60+</td></tr>
+                            <tr><td>Mado Restaurant</td><td>85,000</td><td>60+</td></tr>
+                        </tbody>
+                    </table>
+                    <a class="md-view-all" href="#">View All</a>
+                </section>
+
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Aging of Receivables</strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr><th>Days</th><th>Amount (AED)</th><th>%</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>0 - 30 Days</td><td>1,245,000</td><td>31.2%</td></tr>
+                            <tr><td>31 - 60 Days</td><td>985,500</td><td>24.7%</td></tr>
+                            <tr><td>61 - 90 Days</td><td>511,000</td><td>12.8%</td></tr>
+                            <tr><td>90+ Days</td><td>1,245,000</td><td>31.2%</td></tr>
+                            <tr class="md-total-row"><td>Total</td><td>3,986,500</td><td>100%</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Top 5 Suppliers - Overdue</strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr><th>Supplier</th><th>Overdue Amount (AED)</th><th>Days</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Al Aweer Fruits &amp; Veg</td><td>315,000</td><td>120+</td></tr>
+                            <tr><td>Fresh Harvest LLC</td><td>285,500</td><td>90+</td></tr>
+                            <tr><td>Green Valley Produce</td><td>215,000</td><td>90+</td></tr>
+                            <tr><td>West Zone Trading</td><td>185,000</td><td>60+</td></tr>
+                            <tr><td>Al Madina Fruits</td><td>125,000</td><td>60+</td></tr>
+                        </tbody>
+                    </table>
+                    <a class="md-view-all" href="#">View All</a>
+                </section>
+
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Expenses vs Budget (MTD)</strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr><th>Expense Category</th><th>Actual (AED)</th><th>Budget (AED)</th><th>Variance</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Salaries</td><td>650,000</td><td>600,000</td><td class="md-negative">+50,000 ↗</td></tr>
+                            <tr><td>Vehicle Expenses</td><td>265,300</td><td>220,000</td><td class="md-negative">+45,300 ↗</td></tr>
+                            <tr><td>Rent &amp; Utilities</td><td>145,600</td><td>130,000</td><td class="md-negative">+15,600 ↗</td></tr>
+                            <tr><td>Marketing</td><td>85,400</td><td>70,000</td><td class="md-negative">+15,400 ↗</td></tr>
+                            <tr><td>Other Expenses</td><td>703,000</td><td>670,000</td><td class="md-negative">+33,000 ↗</td></tr>
+                            <tr class="md-total-row"><td>Total</td><td>1,850,300</td><td>1,690,000</td><td class="md-negative">+160,300 ↗</td></tr>
+                        </tbody>
+                    </table>
+                </section>
+            </div>
+
+            <footer class="md-dashboard-footer">
+                <div>
+                    <span>All amounts are in AED</span>
+                    <span class="md-footer-divider">|</span>
+                    <span>Data is live from Odoo ERP</span>
+                    <span class="md-footer-divider">|</span>
+                    <span>Last Updated: 13 May 2025 10:30 AM</span>
+                </div>
+                <div>Powered by <strong>Odoo</strong></div>
+            </footer>
+        </div>
+    </t>
+</templates>

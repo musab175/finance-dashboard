@@ -1,0 +1,375 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="biztras_finance_dashboard.FinanceDashboard" owl="1">
+        <div class="md-dashboard">
+            <div class="md-dashboard-header">
+                <div>
+                    <h1>Biztras Finance Dashboard</h1>
+                    <div class="md-live-line">
+                        <span>As of <t t-esc="state.data.updated_at || 'Loading...'"/></span>
+                        <span class="md-live-dot"></span>
+                        <strong>Live</strong>
+                    </div>
+                </div>
+
+                <div class="md-filters">
+                    <input type="date" t-att-value="state.reportDate || ''"
+                           t-on-change="onDateChange"
+                           t-att-disabled="state.loading"/>
+                    <select t-att-value="state.period" t-on-change="onPeriodChange" t-att-disabled="state.loading"><option value="month">This Month</option><option value="quarter">This Quarter</option><option value="year">This Year</option></select>
+                    <span>Compare With</span>
+                    <button disabled="disabled" t-esc="state.data.comparison_label || 'Last Month'"/>
+                    <button t-on-click="toggleFilters">Filters</button>
+                    <button title="Refresh" t-on-click="loadData"
+                            t-att-disabled="state.loading">↻</button>
+                </div>
+            </div>
+
+            <div t-if="state.showFilters" class="md-filter-panel">
+                <div><strong>Report Date:</strong>
+                    <t t-esc="state.data.report_date"/></div>
+                <div><strong>Period:</strong>
+                    <t t-esc="state.data.period_label"/></div>
+                <div><strong>Compare With:</strong>
+                    <t t-esc="state.data.comparison_label"/></div>
+                <button t-on-click="resetFilters" t-att-disabled="state.loading">
+                    Reset to Today
+                </button>
+            </div>
+
+            <div t-if="state.error" class="alert alert-danger" role="alert">
+                <t t-esc="state.error"/>
+            </div>
+
+            <div class="md-kpi-grid">
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">🏦 Cash &amp; Bank Balance</div>
+                    <div class="md-kpi-value" t-esc="formatMoney(state.data.cash_balance)"/>
+                    <div t-att-class="changeClass(state.data.cash_balance_change)"
+                         t-esc="formatChange(state.data.cash_balance_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">🛒 Today's Sales</div>
+                    <div class="md-kpi-value" t-esc="formatMoney(state.data.today_sales)"/>
+                    <div t-att-class="changeClass(state.data.today_sales_change)"
+                         t-esc="formatChange(state.data.today_sales_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">📊 MTD Sales</div>
+                    <div class="md-kpi-value" t-esc="formatMoney(state.data.mtd_sales)"/>
+                    <div t-att-class="changeClass(state.data.mtd_sales_change)"
+                         t-esc="formatChange(state.data.mtd_sales_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">◕ Gross Profit %</div>
+                    <div class="md-kpi-value"
+                         t-esc="formatPercent(state.data.gross_profit_percent)"/>
+                    <div t-att-class="changeClass(state.data.gross_profit_percent_change)"
+                         t-esc="formatChange(state.data.gross_profit_percent_change, ' pts')"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">ⓢ MTD Net Profit / (Loss)</div>
+                    <div class="md-kpi-value"
+                         t-att-class="{'md-negative': state.data.net_profit &lt; 0}"
+                         t-esc="formatMoney(state.data.net_profit)"/>
+                    <div t-att-class="changeClass(state.data.net_profit_change)"
+                         t-esc="formatChange(state.data.net_profit_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">♟ Total Receivables (AR)</div>
+                    <div class="md-kpi-value"
+                         t-esc="formatMoney(state.data.total_receivables)"/>
+                    <div t-att-class="changeClass(state.data.total_receivables_change, true)"
+                         t-esc="formatChange(state.data.total_receivables_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">⚠ 90+ Days Receivable</div>
+                    <div class="md-kpi-value md-negative"
+                         t-esc="formatMoney(state.data.overdue_90)"/>
+                    <div t-att-class="changeClass(state.data.overdue_90_change, true)"
+                         t-esc="formatChange(state.data.overdue_90_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">▣ Total Payables (AP)</div>
+                    <div class="md-kpi-value"
+                         t-esc="formatMoney(state.data.total_payables)"/>
+                    <div t-att-class="changeClass(state.data.total_payables_change, true)"
+                         t-esc="formatChange(state.data.total_payables_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">▤ Expenses vs <t t-esc="state.data.comparison_label"/></div>
+                    <div class="md-kpi-value" t-esc="formatMoney(state.data.expenses)"/>
+                    <div t-att-class="changeClass(state.data.expenses_change, true)"
+                         t-esc="formatChange(state.data.expenses_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+
+                <div class="md-kpi-card">
+                    <div class="md-kpi-title">▦ Working Capital</div>
+                    <div class="md-kpi-value"
+                         t-esc="formatMoney(state.data.working_capital)"/>
+                    <div t-att-class="changeClass(state.data.working_capital_change)"
+                         t-esc="formatChange(state.data.working_capital_change)"/>
+                    <div class="md-comparison">vs <t t-esc="state.data.comparison_label"/></div>
+                </div>
+            </div>
+            <div class="md-analysis-grid">
+                <section class="md-panel md-sales-panel">
+                    <div class="md-panel-title">
+                        <strong>Sales Analysis</strong>
+                        <button disabled="disabled"
+                                t-esc="state.data.period_label || 'This Month'"/>
+                    </div>
+
+                    <div class="md-chart-legend">
+                        <span t-esc="state.data.currency || ''"/>
+                        <span class="md-actual-key"></span>
+                        <span>Actual Sales</span>
+                        <span class="md-budget-key"></span>
+                        <span t-esc="state.data.comparison_label || 'Last Month'"/>
+                    </div>
+
+                    <svg class="md-line-chart" viewBox="0 0 600 230"
+                         preserveAspectRatio="none">
+                        <line x1="45" y1="20" x2="45" y2="195"/>
+                        <line x1="45" y1="195" x2="580" y2="195"/>
+
+                        <line class="md-grid-line" x1="45" y1="45"
+                              x2="580" y2="45"/>
+                        <line class="md-grid-line" x1="45" y1="95"
+                              x2="580" y2="95"/>
+                        <line class="md-grid-line" x1="45" y1="145"
+                              x2="580" y2="145"/>
+
+                        <polyline class="md-budget-line"
+                            t-att-points="chartPoints(state.data.sales_chart?.previous)"/>
+
+                        <polyline class="md-actual-line"
+                            t-att-points="chartPoints(state.data.sales_chart?.current)"/>
+
+                        <t t-foreach="chartYLabels()" t-as="tick" t-key="tick.y">
+                            <text x="6" t-att-y="tick.y"
+                                  t-esc="formatCompact(tick.value)"/>
+                        </t>
+                        <t t-foreach="chartAxisLabels()" t-as="tick" t-key="tick.label">
+                            <text t-att-x="tick.x" y="220" text-anchor="middle"
+                                  t-esc="tick.label"/>
+                        </t>
+                    </svg>
+                </section>
+
+                <section class="md-panel">
+                    <div class="md-panel-title">
+                        <strong>Sales by Product Category</strong>
+                    </div>
+
+                    <div class="md-division-content">
+                        <div class="md-donut" t-att-style="categoryGradient()"></div>
+
+                        <div class="md-division-legend">
+                            <div t-foreach="state.data.sales_by_category || []"
+                                 t-as="category" t-key="category.name">
+                                <i t-att-style="'background: ' + categoryColor(category_index)"/>
+                                <b t-esc="category.name"/><br/>
+                                <span>
+                                    <t t-esc="formatMoney(category.value)"/>
+                                    (<t t-esc="formatPercent(category.percentage)"/>)
+                                </span>
+                            </div>
+                            <div t-if="!(state.data.sales_by_category || []).length"
+                                 class="text-muted">
+                                No category sales for this period
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="md-panel">
+                    <div class="md-panel-title">
+                        <strong>P&amp;L Summary (MTD)</strong>
+                    </div>
+
+                    <table class="md-summary-table">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th><t t-esc="state.data.period_label"/> (<t t-esc="state.data.currency || ''"/>)</th>
+                                <th>vs <t t-esc="state.data.comparison_label"/></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Total Sales</td>
+                                <td t-esc="formatMoney(state.data.pnl?.sales)"/>
+                                <td t-att-class="changeClass(state.data.pnl?.sales_change)"
+                                    t-esc="formatChange(state.data.pnl?.sales_change)"/></tr>
+                            <tr><td>Cost of Goods Sold</td>
+                                <td t-esc="formatMoney(-(state.data.pnl?.cogs || 0))"/>
+                                <td t-att-class="changeClass(state.data.pnl?.cogs_change, true)"
+                                    t-esc="formatChange(state.data.pnl?.cogs_change)"/></tr>
+                            <tr><td>Gross Profit</td>
+                                <td t-esc="formatMoney(state.data.pnl?.gross_profit)"/>
+                                <td t-att-class="changeClass(state.data.pnl?.gross_profit_change)"
+                                    t-esc="formatChange(state.data.pnl?.gross_profit_change)"/></tr>
+                            <tr><td>Gross Profit %</td>
+                                <td t-esc="formatPercent(state.data.pnl?.gross_profit_percent)"/>
+                                <td t-att-class="changeClass(state.data.pnl?.gross_profit_percent_change)"
+                                    t-esc="formatChange(state.data.pnl?.gross_profit_percent_change, ' pts')"/></tr>
+                            <tr><td>Operating Expenses</td>
+                                <td t-esc="formatMoney(-(state.data.pnl?.operating_expenses || 0))"/>
+                                <td t-att-class="changeClass(state.data.pnl?.operating_expenses_change, true)"
+                                    t-esc="formatChange(state.data.pnl?.operating_expenses_change)"/></tr>
+                            <tr><td>Other Income</td>
+                                <td t-esc="formatMoney(state.data.pnl?.other_income)"/>
+                                <td t-att-class="changeClass(state.data.pnl?.other_income_change)"
+                                    t-esc="formatChange(state.data.pnl?.other_income_change)"/></tr>
+                            <tr class="md-total-row">
+                                <td>Net Profit / (Loss)</td>
+                                <td t-att-class="{'md-negative': state.data.pnl?.net_profit &lt; 0}"
+                                    t-esc="formatMoney(state.data.pnl?.net_profit)"/>
+                                <td t-att-class="changeClass(state.data.pnl?.net_profit_change)"
+                                    t-esc="formatChange(state.data.pnl?.net_profit_change)"/>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+            </div>
+
+            <div class="md-bottom-grid">
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Top 5 Customers - Overdue</strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr><th>Customer</th><th>Overdue Amount (<t t-esc="state.data.currency || ''"/>)</th><th>Days</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr t-foreach="state.data.top_overdue_customers || []"
+                                t-as="row" t-key="row.name">
+                                <td t-esc="row.name"/>
+                                <td t-esc="formatNumber(row.amount)"/>
+                                <td><t t-esc="row.days"/>+</td>
+                            </tr>
+                            <tr t-if="!(state.data.top_overdue_customers || []).length">
+                                <td colspan="3" class="text-muted">No overdue customers</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <a class="md-view-all" href="#"
+                       t-on-click.prevent="openOverdueCustomers">View All</a>
+                </section>
+
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Aging of Receivables</strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr><th>Days</th><th>Amount (<t t-esc="state.data.currency || ''"/>)</th><th>%</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr t-foreach="state.data.receivable_aging?.rows || []"
+                                t-as="row" t-key="row.label">
+                                <td t-esc="row.label"/>
+                                <td t-esc="formatNumber(row.amount)"/>
+                                <td t-esc="formatPercent(row.percentage)"/>
+                            </tr>
+                            <tr class="md-total-row">
+                                <td>Total</td>
+                                <td t-esc="formatNumber(state.data.receivable_aging?.total)"/>
+                                <td>100%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Top 5 Suppliers - Overdue</strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr><th>Supplier</th><th>Overdue Amount (<t t-esc="state.data.currency || ''"/>)</th><th>Days</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr t-foreach="state.data.top_overdue_suppliers || []"
+                                t-as="row" t-key="row.name">
+                                <td t-esc="row.name"/>
+                                <td t-esc="formatNumber(row.amount)"/>
+                                <td><t t-esc="row.days"/>+</td>
+                            </tr>
+                            <tr t-if="!(state.data.top_overdue_suppliers || []).length">
+                                <td colspan="3" class="text-muted">No overdue suppliers</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <a class="md-view-all" href="#"
+                       t-on-click.prevent="openOverdueSuppliers">View All</a>
+                </section>
+
+                <section class="md-panel md-table-panel">
+                    <div class="md-panel-title">
+                        <strong>Expenses vs <t t-esc="state.data.comparison_label"/></strong>
+                    </div>
+                    <table class="md-data-table">
+                        <thead>
+                            <tr>
+                                <th>Expense Account</th>
+                                <th><t t-esc="state.data.period_label"/> (<t t-esc="state.data.currency || ''"/>)</th>
+                                <th><t t-esc="state.data.comparison_label"/> (<t t-esc="state.data.currency || ''"/>)</th>
+                                <th>Variance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr t-foreach="state.data.expenses_by_account?.rows || []"
+                                t-as="row" t-key="row.name">
+                                <td t-esc="row.name"/>
+                                <td t-esc="formatNumber(row.current)"/>
+                                <td t-esc="formatNumber(row.previous)"/>
+                                <td t-att-class="changeClass(row.variance, true)"
+                                    t-esc="formatVariance(row.variance)"/>
+                            </tr>
+                            <tr t-if="!(state.data.expenses_by_account?.rows || []).length">
+                                <td colspan="4" class="text-muted">No expenses for this period</td>
+                            </tr>
+                            <tr class="md-total-row">
+                                <td>Total</td>
+                                <td t-esc="formatNumber(state.data.expenses_by_account?.current_total)"/>
+                                <td t-esc="formatNumber(state.data.expenses_by_account?.previous_total)"/>
+                                <td t-att-class="changeClass(state.data.expenses_by_account?.variance_total, true)"
+                                    t-esc="formatVariance(state.data.expenses_by_account?.variance_total)"/>
+                            </tr>
+                        </tbody>
+                    </table>
+                </section>
+            </div>
+
+            <footer class="md-dashboard-footer">
+                <div>
+                    <span>All amounts are in <t t-esc="state.data.currency || ''"/></span>
+                    <span class="md-footer-divider">|</span>
+                    <span>Data is live from Odoo ERP</span>
+                    <span class="md-footer-divider">|</span>
+                    <span>Last Updated: <t t-esc="state.data.updated_at || 'Loading...'"/></span>
+                </div>
+                <div>Powered by <strong>Odoo</strong></div>
+            </footer>
+        </div>
+    </t>
+</templates>
