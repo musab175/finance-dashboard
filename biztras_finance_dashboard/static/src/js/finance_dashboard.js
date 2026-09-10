@@ -12,16 +12,19 @@ export class FinanceDashboard extends Component {
         this.action = useService("action");
         this.state = useState({
             loading: true,
+            hasLoadedOnce: false,
             error: null,
             data: {},
             reportDate: null,
             period: "month",
             showFilters: false,
         });
+        this._loadToken = 0;
         onWillStart(() => this.loadData());
     }
 
     async loadData() {
+        const token = ++this._loadToken;
         this.state.loading = true;
         this.state.error = null;
         try {
@@ -30,14 +33,25 @@ export class FinanceDashboard extends Component {
                 "get_dashboard_data",
                 [this.state.reportDate || false, this.state.period]
             );
+            if (token !== this._loadToken) {
+                // A newer request started while this one was in flight;
+                // this response is stale, don't let it overwrite fresher data.
+                return;
+            }
             this.state.data = data;
             this.state.reportDate = data.report_date_iso;
             this.state.period = data.period;
         } catch (error) {
+            if (token !== this._loadToken) {
+                return;
+            }
             console.error("Could not load Biztras dashboard data", error);
             this.state.error = "Live finance data could not be loaded.";
         } finally {
-            this.state.loading = false;
+            if (token === this._loadToken) {
+                this.state.loading = false;
+                this.state.hasLoadedOnce = true;
+            }
         }
     }
 

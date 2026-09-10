@@ -443,3 +443,88 @@
         flex-direction: column;
     }
 }
+
+// --- Skeleton loading state -------------------------------------------
+// Shown only until the dashboard's first get_dashboard_data() response
+// arrives (state.hasLoadedOnce is false). Reuses .md-kpi-card / .md-panel
+// for identical sizing/spacing so nothing jumps around once real data
+// replaces it.
+
+.md-skeleton-wrap {
+    .md-kpi-grid,
+    .md-analysis-grid,
+    .md-bottom-grid {
+        margin-top: 0;
+    }
+
+    .md-analysis-grid {
+        margin-top: 12px;
+    }
+}
+
+.md-skeleton-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    justify-content: flex-start;
+}
+
+.md-skeleton-line,
+.md-skeleton-block {
+    border-radius: 5px;
+    background: linear-gradient(
+        90deg,
+        #ececef 25%,
+        #f6f5f7 37%,
+        #ececef 63%
+    );
+    background-size: 400% 100%;
+    animation: md-skeleton-shimmer 1.4s ease infinite;
+}
+
+.md-skeleton-line {
+    height: 12px;
+    width: 100%;
+}
+
+.md-skeleton-title {
+    width: 55%;
+    height: 13px;
+}
+
+.md-skeleton-value {
+    width: 75%;
+    height: 22px;
+}
+
+.md-skeleton-small {
+    width: 40%;
+    height: 10px;
+}
+
+.md-skeleton-block {
+    flex: 1 1 auto;
+    min-height: 160px;
+    width: 100%;
+}
+
+.md-skeleton-donut {
+    align-self: center;
+    width: 140px;
+    height: 140px;
+    border-radius: 50%;
+    min-height: 0;
+}
+
+@keyframes md-skeleton-shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .md-skeleton-line,
+    .md-skeleton-block {
+        animation: none;
+        background: #ececef;
+    }
+}

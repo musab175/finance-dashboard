@@ -41,6 +41,37 @@
                 <t t-esc="state.error"/>
             </div>
 
+            <div t-if="!state.hasLoadedOnce" class="md-skeleton-wrap" aria-busy="true" aria-live="polite">
+                <div class="md-kpi-grid">
+                    <div t-foreach="Array(10)" t-as="card" t-key="card_index" class="md-kpi-card md-skeleton-card">
+                        <div class="md-skeleton-line md-skeleton-title"></div>
+                        <div class="md-skeleton-line md-skeleton-value"></div>
+                        <div class="md-skeleton-line md-skeleton-small"></div>
+                    </div>
+                </div>
+                <div class="md-analysis-grid">
+                    <section class="md-panel md-sales-panel md-skeleton-card">
+                        <div class="md-skeleton-line md-skeleton-title"></div>
+                        <div class="md-skeleton-block md-skeleton-chart"></div>
+                    </section>
+                    <section class="md-panel md-skeleton-card">
+                        <div class="md-skeleton-line md-skeleton-title"></div>
+                        <div class="md-skeleton-block md-skeleton-donut"></div>
+                    </section>
+                    <section class="md-panel md-skeleton-card">
+                        <div class="md-skeleton-line md-skeleton-title"></div>
+                        <div t-foreach="Array(6)" t-as="row" t-key="row_index" class="md-skeleton-line"></div>
+                    </section>
+                </div>
+                <div class="md-bottom-grid">
+                    <section t-foreach="Array(4)" t-as="panel" t-key="panel_index" class="md-panel md-table-panel md-skeleton-card">
+                        <div class="md-skeleton-line md-skeleton-title"></div>
+                        <div t-foreach="Array(4)" t-as="row" t-key="row_index" class="md-skeleton-line"></div>
+                    </section>
+                </div>
+            </div>
+
+            <t t-if="state.hasLoadedOnce">
             <div class="md-kpi-grid">
                 <div class="md-kpi-card">
                     <div class="md-kpi-title">🏦 Cash &amp; Bank Balance</div>
@@ -359,6 +390,7 @@
                     </table>
                 </section>
             </div>
+            </t>
 
             <footer class="md-dashboard-footer">
                 <div>
