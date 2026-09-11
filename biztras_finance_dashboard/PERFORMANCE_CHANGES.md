@@ -684,3 +684,298 @@ Load time dropped from about 105–120 seconds to about 3–9 seconds — no
 code was rewritten, no feature changed, and every number the dashboard
 shows is calculated exactly the same way as before, just answered much
 faster."
+
+---
+
+# Login Performance Investigation & Finance Dashboard Registry Error (2026-09-11)
+
+Two separate incidents, investigated and fixed independently per explicit
+instruction not to assume they shared a cause. They turned out to be
+genuinely unrelated — documented together here only because they were
+found in the same session.
+
+## Login Performance Investigation
+
+### Original problem
+
+Login reported taking ~2.5 minutes before the application became usable.
+
+### Login lifecycle traced
+
+```
+Browser
+  ↓
+POST /web/login (authenticate)
+  ↓
+GET /web (session_info, webclient bootstrap)
+  ↓
+GET /web/webclient/load_menus/<hash>
+  ↓
+Application becomes usable
+```
+
+### Measured timings
+
+Four successive full-flow measurements, taken minutes apart, login → menus:
+
+| Attempt | Login POST | Web bootstrap | load_menus | **Total** |
+|---|---|---|---|---|
+| During the incident | — | 500 error | 500 error | request failed outright |
+| 1 (~30s after DB recovery) | 8.16s | 10.23s | 1.48s | **25.39s** |
+| 2 | 6.74s | 2.85s | 0.94s | **24.70s** |
+| 3 (after container restart, cold) | 9.12s | 14.17s | 1.32s | **26.79s** |
+| 4 (steady state) | 5.28s | 1.65s | 0.82s | **9.61s** |
+
+No stage ever measured in the range of minutes once the database was
+actually reachable — the "~2.5 minutes" the user experienced corresponds
+to the window in attempt 0, where requests didn't slowly succeed, they
+**failed outright with HTTP 500** while retrying/reconnecting.
+
+### Root cause
+
+**The remote PostgreSQL server itself restarted** — confirmed directly
+from its own log output during a live request:
+
+```
+psycopg2.OperationalError: SSL connection has been closed unexpectedly
+psycopg2.InterfaceError: connection already closed
+psycopg2.OperationalError: connection to server at "141.145.154.249",
+  port 5432 failed: FATAL:  the database system is shutting down
+```
+
+Immediately after, `pg_postmaster_start_time()` returned a timestamp only
+24 seconds before the check — direct proof the Postgres server process
+had just come back up from a restart. This is **external infrastructure**,
+outside this Odoo application, outside the Finance Dashboard module, and
+outside anything changed in this repository. Nothing here caused it, and
+nothing here could have prevented it.
+
+The elevated-but-recovering timings in attempts 1–4 are the normal,
+expected shape of a database's cache (`shared_buffers`) rebuilding after
+a cold restart — each successive request got faster as more of the
+working data set was back in memory, which is exactly the pattern
+measured (25s → 25s → 27s-after-a-second-restart → 9.6s).
+
+### Fix
+
+**None implemented.** There is nothing in this codebase to fix — the
+cause was an external database restart that had already resolved by the
+time it was diagnosed. If it recurs, the useful question is "why did
+Postgres restart at that timestamp," which needs investigation on
+whoever manages the `141.145.154.249` host, not this application.
+
+### Before/after performance
+
+Not applicable in the usual sense — there was no code change. The
+"after" numbers above (9.6s steady-state total, login-to-usable) are
+provided as a healthy-baseline reference for comparison if this is
+reported again in the future.
+
+### Relevant files
+
+None — no file in this repository was touched for this investigation.
+
+### Relevant database queries
+
+None specific to login were found to be the bottleneck — the delay was
+at the connection/server level, before any application query could even
+run.
+
+### Standing risk noted (not fixed, out of scope for this investigation)
+
+This container still runs with `workers = 0` (single-process Odoo),
+flagged in an earlier login investigation as a risk: any future stuck
+thread or DB hiccup can degrade the whole server at once. Not touched
+here per the instruction to keep this investigation's root cause
+separate from unrelated prior findings.
+
+---
+
+## Finance Dashboard Registry Error
+
+### Error message
+
+```
+UncaughtPromiseError > KeyNotFoundError
+Cannot find finance_dashboard.dashboard in this registry!
+  at Registry.get (web.assets_web.min.js)
+  at _executeClientAction (web.assets_web.min.js)
+  at Object.doAction (web.assets_web.min.js)
+  at async Object.selectMenu (web.assets_web.min.js)
+```
+
+### What an Odoo client-action registry is
+
+Odoo's frontend keeps a runtime lookup table ("registry") of every OWL
+component that can be opened as a full-page action. A JavaScript file
+registers itself into that table with a unique string key — e.g. this
+module's own `finance_dashboard.js` ends with:
+
+```js
+registry.category("actions").add(
+    "biztras_finance_dashboard.dashboard",
+    FinanceDashboard
+);
+```
+
+### How the Finance Dashboard menu triggers the action
+
+```
+Click menu
+  ↓
+ir.ui.menu.action  →  ir.actions.client record
+  ↓
+that record's "tag" field (a plain string, e.g. "biztras_finance_dashboard.dashboard")
+  ↓
+Odoo looks up that exact string in the frontend registry
+  ↓
+if found: mounts the matching component
+if not found: KeyNotFoundError — exactly what was reported
+```
+
+### What `finance_dashboard.dashboard` represents
+
+It is the tag of a **different, pre-existing `ir.actions.client` record**
+(id 1522) — not a typo and not this module's own tag
+(`biztras_finance_dashboard.dashboard`). It belongs to a third,
+unrelated addon whose technical name is literally `finance_dashboard`.
+
+### Where it was (supposed to be) registered
+
+Nowhere. This investigation searched this container's entire mounted
+filesystem, across every addons path, for a `finance_dashboard` module
+directory — none exists. Its database records (one `ir.actions.client`,
+three `ir.ui.menu` rows, three `ir.model.data` rows total) are the only
+trace of it; its JavaScript source code has never been present in this
+environment. Most likely an abandoned early scaffold, predating this
+module, whose database records survived without its code.
+
+### Which asset bundle loads it
+
+None — there is no file to bundle. This was not a bundle-configuration
+problem; there was nothing to configure.
+
+### Why it was missing
+
+Three separate top-level menus all contained "Finance Dashboard" in
+their name, which made it easy to click the wrong one:
+
+| Menu | Action tag | Status |
+|---|---|---|
+| id 999 "Biztras Finance Dashboard" | `biztras_finance_dashboard.dashboard` | Works — this module |
+| id 1000/1001 "Finance Dashboard" → "Dashboard" | `finance_dashboard.dashboard` | Broken — dead module, source never existed |
+| id 1002 "Finance Dashboard" | `md_finance_dashboard.dashboard` | Also broken (separate reason: that module's install was never completed — state `to install`, not `installed`, so its otherwise-real JS was never bundled either) |
+
+One contributing detail from earlier in this same session: the dead
+`finance_dashboard` module's `ir.module.module.state` had been changed
+from `installed` to `uninstalled` via a direct database update, to stop
+it from blocking ~200 unrelated enterprise modules from loading. That
+state change did **not** delete its orphaned menu/action records — a
+proper Odoo module uninstall cascades and removes those via
+`ir.model.data`; a raw state-flag change does not. To be precise: this
+did not *cause* the breakage (the JS never existed, before or after
+that change) — it left a pre-existing landmine in place rather than
+defusing it.
+
+### Root cause
+
+An orphaned, source-less module's menu and action remained clickable in
+the menu tree, alongside two other menus also named "Finance Dashboard,"
+making it easy to trigger.
+
+### Fix
+
+Deactivated the two broken menu paths at the database level — nothing
+in `biztras_finance_dashboard` was touched.
+
+**UP / APPLY:**
+```sql
+UPDATE ir_ui_menu SET active = false WHERE id IN (1000, 1001, 1002);
+```
+
+**DOWN / ROLLBACK:**
+```sql
+UPDATE ir_ui_menu SET active = true WHERE id IN (1000, 1001, 1002);
+```
+
+`ir.actions.client` has no `active` field in this Odoo version (its
+table, `ir_act_client`, doesn't carry one) — hiding the **menu** is the
+correct and sufficient fix, since a hidden menu cannot be clicked
+regardless of the action's own state. An earlier attempt also tried to
+deactivate `ir_actions_client` directly; that table name doesn't exist
+(it's `ir_act_client`), and — important operational lesson, kept here
+for future reference — because both statements were sent to `psql` in
+one `-c` argument separated only by semicolons, PostgreSQL treated them
+as a single implicit transaction: the second statement's error
+("relation does not exist") rolled back the *first* statement too, even
+though `UPDATE 3` had already printed as if it succeeded. Always verify
+a change landed (e.g. `SELECT ... FROM ir_ui_menu WHERE id IN (...)`)
+rather than trusting a row-count message alone when multiple statements
+are sent together.
+
+**Important operational note also discovered while applying this fix:**
+`biztras-odoo17` runs as a single long-lived process. That process had
+already built its menu structure into memory *before* the database was
+changed via `psql`, and a raw SQL UPDATE from an external connection
+does not trigger Odoo's in-process cache invalidation the way an ORM
+write from inside the running server would. The database was correct
+immediately; the *running server* kept serving the old menu list until
+the container was restarted. If a future database-level fix doesn't
+seem to take effect in the browser, check whether it actually needs a
+server restart before assuming the fix itself failed.
+
+### Testing
+
+- Confirmed via raw SQL that `ir_ui_menu.active` is `false` for ids
+  1000/1001/1002 and unchanged (`true`) for id 999.
+- Restarted `biztras-odoo17` so the running server picks up the change.
+- Fresh login → `load_menus` response now shows exactly one
+  finance-related menu: `"Biztras Finance Dashboard"` — the two broken
+  duplicates no longer appear anywhere in the menu tree.
+- Called `get_dashboard_data` via the same RPC path a real browser
+  uses (not a shell shortcut) — returned `HTTP 200`,
+  `cash_balance = 2612861.93`, matching the verified-correct baseline
+  exactly.
+- Repeated with `period="quarter"` — same `cash_balance` (correct: it's
+  a point-in-time figure independent of period), different period
+  correctly echoed back.
+- Refreshed `/web` on the same session — `HTTP 200`, no errors.
+
+### How to troubleshoot this error in the future
+
+1. In the browser console, note the exact tag string in the error
+   (e.g. `finance_dashboard.dashboard`) — it tells you precisely which
+   `ir.actions.client` record is misconfigured; don't assume it's this
+   module without checking the string.
+2. Find which menu points at that tag:
+   `ir.actions.client.search([('tag','=','<tag>')])`, then
+   `ir.ui.menu.search([('action','=','ir.actions.client,<id>')])`.
+3. Check `ir.model.data` for that action/menu to find which module owns
+   it (`module` field) — if that module's source isn't present in the
+   addons path, or its state isn't `installed`, that's the cause.
+4. After any direct database fix (raw SQL, not through the Odoo ORM),
+   restart the Odoo process before concluding the fix didn't work — the
+   running server's in-memory caches won't see external SQL changes on
+   their own.
+
+---
+
+## Simple explanation for non-technical stakeholders
+
+**Login delay:** the shared database server briefly restarted on its
+own — an infrastructure event outside our application, the same as a
+power blip would be. Login attempts made during that window failed and
+had to be retried, which is what felt like 2.5 minutes. Once the
+database was back, login returned to normal within a few requests as
+its memory cache rebuilt. There was nothing in our code to fix.
+
+**Finance Dashboard error:** the menu you clicked was pointing at a
+Finance Dashboard that was never actually built — a leftover, empty
+placeholder from before the real one existed, sitting right next to the
+working one under a confusingly similar name. Odoo knew a menu called
+"Finance Dashboard" existed, but when it went to open it, there was no
+actual dashboard behind that particular one — like a door with a sign
+on it, but no room on the other side. We removed that door (and one
+other broken lookalike) so only the real, working Finance Dashboard menu
+remains. The real one — the one we've been measuring and optimizing all
+along — was never affected.
