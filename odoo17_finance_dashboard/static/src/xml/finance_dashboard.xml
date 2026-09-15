@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="finance_dashboard.Dashboard" owl="1">
+        <div class="o_finance_dashboard">
+
+            <div class="fd_header">
+                <div class="fd_header_left">
+                    <h2>Finance Dashboard</h2>
+                    <span class="fd_as_of" t-if="state.data">As of <t t-esc="state.data.as_of"/> <span class="fd_live">● Live</span></span>
+                </div>
+                <div class="fd_toolbar">
+                    <input type="date" class="fd_control" name="asOf" t-att-value="state.asOf" t-on-change="onFilterChange"/>
+                    <button class="fd_btn fd_btn_icon" t-on-click="onRefresh" title="Refresh">⟳</button>
+                </div>
+            </div>
+
+            <div t-if="state.loading" class="fd_loading">Loading dashboard…</div>
+            <div t-elif="state.error" class="fd_error" t-esc="state.error"/>
+
+            <t t-else="">
+                <!-- KPI cards -->
+                <div class="fd_kpi_grid">
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-university" title="Cash and Bank"/> Cash &amp; Bank Balance</div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.cash_bank_balance)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.cash_bank_change)}}" t-esc="pct(state.data.cash_bank_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-calendar" title="Today"/> Today's Sales</div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.today_sales)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.today_sales_change)}}" t-esc="pct(state.data.today_sales_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-line-chart" title="Sales"/> <t t-esc="state.data.period_label"/> Sales</div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.mtd_sales)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.mtd_sales_change)}}" t-esc="pct(state.data.mtd_sales_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-percent" title="Gross Profit"/> Gross Profit %</div>
+                        <div class="fd_kpi_value" t-esc="state.data.gross_profit_pct + '%'"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.gross_profit_pct_change)}}" t-esc="pts(state.data.gross_profit_pct_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-balance-scale" title="Net Profit"/> <t t-esc="state.data.period_label"/> Net Profit / (Loss)</div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.net_profit)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.net_profit_change)}}" t-esc="pct(state.data.net_profit_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-arrow-circle-o-down" title="Receivables"/> Total Receivables (AR)</div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.total_ar)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.total_ar_change)}}" t-esc="pct(state.data.total_ar_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-exclamation-triangle" title="At risk"/> 90+ Days Receivable</div>
+                        <div class="fd_kpi_value fd_kpi_danger" t-esc="fmt(state.data.receivable_90_plus)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{inverseTrend(state.data.receivable_90_plus_change)}}" t-esc="pct(state.data.receivable_90_plus_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-arrow-circle-o-up" title="Payables"/> Total Payables (AP)</div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.total_ap)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{inverseTrend(state.data.total_ap_change)}}" t-esc="pct(state.data.total_ap_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-list-alt" title="Expenses"/> Expenses vs <t t-esc="state.data.compare_label"/></div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.total_expenses)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{inverseTrend(state.data.total_expenses_change)}}" t-esc="pct(state.data.total_expenses_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                    <div class="fd_kpi_card">
+                        <div class="fd_kpi_label"><i class="fa fa-money" title="Working Capital"/> Working Capital</div>
+                        <div class="fd_kpi_value" t-esc="fmt(state.data.working_capital)"/>
+                        <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.working_capital_change)}}" t-esc="pct(state.data.working_capital_change) + ' vs ' + state.data.compare_label"/>
+                    </div>
+                </div>
+
+                <!-- Charts + P&amp;L -->
+                <div class="fd_charts_row">
+                    <div class="fd_chart_card fd_chart_wide">
+                        <div class="fd_card_title_row">
+                            <div class="fd_card_title">Sales Analysis</div>
+                            <span class="fd_badge" t-esc="state.data.period_name"/>
+                        </div>
+                        <div class="fd_chart_canvas_wrap">
+                            <canvas t-ref="salesChart"/>
+                        </div>
+                    </div>
+                    <div class="fd_chart_card">
+                        <div class="fd_card_title">Sales by Product Category</div>
+                        <div class="fd_category_body" t-if="state.data.category_sales.length">
+                            <div class="fd_chart_canvas_wrap fd_donut_wrap">
+                                <canvas t-ref="categoryChart"/>
+                            </div>
+                            <div class="fd_category_legend">
+                                <div class="fd_legend_row" t-foreach="state.data.category_sales" t-as="cat" t-key="cat.name">
+                                    <span class="fd_legend_dot" t-attf-style="background: {{categoryColor(cat_index)}}"/>
+                                    <div>
+                                        <div class="fd_legend_name" t-esc="cat.name"/>
+                                        <div class="fd_legend_amount" t-esc="fmt(cat.amount) + ' (' + categoryPct(cat.amount) + '%)'"/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div t-else="" class="fd_empty">No sales in this period</div>
+                    </div>
+                    <div class="fd_chart_card">
+                        <div class="fd_card_title">P&amp;L Summary (<t t-esc="state.data.period_label"/>)</div>
+                        <table class="fd_table fd_table_pnl">
+                            <tr><th/><th>Amount</th><th t-esc="'vs ' + state.data.compare_label"/></tr>
+                            <tr>
+                                <td>Total Sales</td>
+                                <td t-esc="fmt(state.data.pnl.total_sales)"/>
+                                <td t-attf-class="fd_trend_{{trend(state.data.pnl.total_sales_change)}}" t-esc="pct(state.data.pnl.total_sales_change)"/>
+                            </tr>
+                            <tr>
+                                <td>Cost of Goods Sold</td>
+                                <td t-esc="fmt(state.data.pnl.cogs)"/>
+                                <td t-attf-class="fd_trend_{{inverseTrend(state.data.pnl.cogs_change)}}" t-esc="pct(state.data.pnl.cogs_change)"/>
+                            </tr>
+                            <tr>
+                                <td>Gross Profit</td>
+                                <td t-esc="fmt(state.data.pnl.gross_profit)"/>
+                                <td t-attf-class="fd_trend_{{trend(state.data.pnl.gross_profit_change)}}" t-esc="pct(state.data.pnl.gross_profit_change)"/>
+                            </tr>
+                            <tr>
+                                <td>Gross Profit %</td>
+                                <td t-esc="state.data.pnl.gross_profit_pct + '%'"/>
+                                <td/>
+                            </tr>
+                            <tr>
+                                <td>Operating Expenses</td>
+                                <td t-esc="fmt(state.data.pnl.opex)"/>
+                                <td t-attf-class="fd_trend_{{inverseTrend(state.data.pnl.opex_change)}}" t-esc="pct(state.data.pnl.opex_change)"/>
+                            </tr>
+                            <tr>
+                                <td>Other Income</td>
+                                <td t-esc="fmt(state.data.pnl.other_income)"/>
+                                <td t-attf-class="fd_trend_{{trend(state.data.pnl.other_income_change)}}" t-esc="pct(state.data.pnl.other_income_change)"/>
+                            </tr>
+                            <tr class="fd_table_total">
+                                <td>Net Profit / (Loss)</td>
+                                <td t-esc="fmt(state.data.pnl.net_profit)"/>
+                                <td t-attf-class="fd_trend_{{trend(state.data.pnl.net_profit_change)}}" t-esc="pct(state.data.pnl.net_profit_change)"/>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Bottom tables -->
+                <div class="fd_bottom_row">
+                    <div class="fd_chart_card">
+                        <div class="fd_card_title">Top 5 Customers - Overdue</div>
+                        <table class="fd_table" t-if="state.data.top_customers.length">
+                            <tr><th>Customer</th><th>Overdue Amount</th><th>Days</th></tr>
+                            <tr t-foreach="state.data.top_customers" t-as="c" t-key="c.name">
+                                <td t-esc="c.name"/>
+                                <td t-esc="fmt(c.amount)"/>
+                                <td t-esc="c.days + '+'"/>
+                            </tr>
+                        </table>
+                        <div t-else="" class="fd_empty">No overdue customers</div>
+                        <a href="#" class="fd_view_all" t-on-click.prevent="openOverdueCustomers">View All</a>
+                    </div>
+                    <div class="fd_chart_card">
+                        <div class="fd_card_title">Aging of Receivables</div>
+                        <table class="fd_table">
+                            <tr><th>Days</th><th>Amount</th><th>%</th></tr>
+                            <tr t-foreach="state.data.aging" t-as="a" t-key="a.range">
+                                <td t-esc="a.range + ' Days'"/>
+                                <td t-esc="fmt(a.amount)"/>
+                                <td t-esc="a.pct + '%'"/>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="fd_chart_card">
+                        <div class="fd_card_title">Top 5 Suppliers - Overdue</div>
+                        <table class="fd_table" t-if="state.data.top_suppliers.length">
+                            <tr><th>Supplier</th><th>Overdue Amount</th><th>Days</th></tr>
+                            <tr t-foreach="state.data.top_suppliers" t-as="s" t-key="s.name">
+                                <td t-esc="s.name"/>
+                                <td t-esc="fmt(s.amount)"/>
+                                <td t-esc="s.days + '+'"/>
+                            </tr>
+                        </table>
+                        <div t-else="" class="fd_empty">No overdue suppliers</div>
+                        <a href="#" class="fd_view_all" t-on-click.prevent="openOverdueSuppliers">View All</a>
+                    </div>
+                    <div class="fd_chart_card">
+                        <div class="fd_card_title">Expenses vs <t t-esc="state.data.compare_label"/></div>
+                        <table class="fd_table" t-if="state.data.expenses_table.length">
+                            <tr><th>Expense Account</th><th>This Period</th><th t-esc="state.data.compare_label"/><th>Variance</th></tr>
+                            <tr t-foreach="state.data.expenses_table" t-as="e" t-key="e.name">
+                                <td t-esc="e.name"/>
+                                <td t-esc="fmt(e.this_month)"/>
+                                <td t-esc="fmt(e.last_month)"/>
+                                <td t-attf-class="fd_trend_{{inverseTrend(e.variance)}}" t-esc="fmtDelta(e.variance)"/>
+                            </tr>
+                        </table>
+                        <div t-else="" class="fd_empty">No expenses recorded</div>
+                    </div>
+                </div>
+
+                <div class="fd_footer">
+                    <span>All amounts are in AED &#160;|&#160; Data is live from Odoo ERP &#160;|&#160; Last Updated: <t t-esc="state.data.as_of"/></span>
+                    <span>Powered by Odoo</span>
+                </div>
+            </t>
+        </div>
+    </t>
+
+</templates>
