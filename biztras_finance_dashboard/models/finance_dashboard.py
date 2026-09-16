@@ -7,9 +7,33 @@ class BiztrasFinanceDashboard(models.AbstractModel):
     _name = "biztras.finance.dashboard"
     _description = "Biztras Finance Dashboard Data"
 
+    def _company_ids(self, company_ids=None):
+        """Resolve the company ids this call should be scoped to.
+
+        The top-bar company switcher already sends its current selection as
+        `allowed_company_ids` in the RPC context automatically (the `orm`
+        service merges `user.context` into every call - confirmed in
+        odoo/addons/web/static/src/core/orm_service.js), so no frontend
+        change is required for that path. `company_ids`, if explicitly
+        passed, is validated the same way through Odoo's own env.companies
+        mechanism rather than trusted blindly - reuses Odoo's built-in
+        allowed-company access check instead of a hand-rolled one.
+        """
+        if company_ids:
+            env = self.env(context=dict(self.env.context, allowed_company_ids=company_ids))
+            ids = env.companies.ids
+        else:
+            ids = self.env.companies.ids
+        return ids or [self.env.company.id]
+
     @api.model
-    def get_dashboard_data(self, report_date=None, period="month"):
-        company = self.env.company
+    def get_dashboard_data(self, report_date=None, period="month", company_ids=None):
+        company_ids = self._company_ids(company_ids)
+        # All companies in this database use the same currency (AED,
+        # verified) - display is taken from the first selected company.
+        # If a future company uses a different currency, this display
+        # value (not any financial calculation) would need reconsidering.
+        primary_company = self.env["res.company"].browse(company_ids[0])
         today = (
             fields.Date.to_date(report_date)
             if report_date
@@ -104,12 +128,12 @@ class BiztrasFinanceDashboard(models.AbstractModel):
                     THEN l.balance ELSE 0 END) AS previous_overdue_90
             FROM account_move_line l
             JOIN account_account a ON a.id = l.account_id
-            WHERE l.company_id = %(company_id)s
+            WHERE l.company_id = ANY(%(company_ids)s)
               AND l.parent_state = 'posted'
               AND l.date <= %(today)s
             """,
             {
-                "company_id": company.id,
+                "company_ids": company_ids,
                 "today": today,
                 "month_start": month_start,
                 "previous_month_end": previous_month_end,
@@ -141,14 +165,14 @@ class BiztrasFinanceDashboard(models.AbstractModel):
             """
             SELECT invoice_date, SUM(amount_total_signed) AS daily_total
             FROM account_move
-            WHERE company_id = %(company_id)s
+            WHERE company_id = ANY(%(company_ids)s)
               AND state = 'posted'
               AND move_type IN ('out_invoice', 'out_refund')
               AND invoice_date BETWEEN %(previous_month_start)s AND %(today)s
             GROUP BY invoice_date
             """,
             {
-                "company_id": company.id,
+                "company_ids": company_ids,
                 "today": today,
                 "previous_month_start": previous_month_start,
             },
@@ -202,7 +226,7 @@ class BiztrasFinanceDashboard(models.AbstractModel):
             JOIN product_product pp ON pp.id = l.product_id
             JOIN product_template pt ON pt.id = pp.product_tmpl_id
             JOIN product_category cat ON cat.id = pt.categ_id
-            WHERE m.company_id = %(company_id)s
+            WHERE m.company_id = ANY(%(company_ids)s)
               AND m.state = 'posted'
               AND m.move_type IN ('out_invoice', 'out_refund')
               AND m.invoice_date BETWEEN %(month_start)s AND %(today)s
@@ -211,7 +235,7 @@ class BiztrasFinanceDashboard(models.AbstractModel):
             GROUP BY cat.id, cat.complete_name
             """,
             {
-                "company_id": company.id,
+                "company_ids": company_ids,
                 "today": today,
                 "month_start": month_start,
             },
@@ -274,14 +298,14 @@ class BiztrasFinanceDashboard(models.AbstractModel):
             SELECT l.partner_id, l.amount_residual, l.date_maturity, a.account_type
             FROM account_move_line l
             JOIN account_account a ON a.id = l.account_id
-            WHERE l.company_id = %(company_id)s
+            WHERE l.company_id = ANY(%(company_ids)s)
               AND l.parent_state = 'posted'
               AND l.reconciled = false
               AND l.date <= %(today)s
               AND a.account_type IN ('asset_receivable', 'liability_payable')
             """,
             {
-                "company_id": company.id,
+                "company_ids": company_ids,
                 "today": today,
             },
         )
@@ -390,14 +414,14 @@ class BiztrasFinanceDashboard(models.AbstractModel):
                     THEN l.balance ELSE 0 END) AS previous_total
             FROM account_move_line l
             JOIN account_account a ON a.id = l.account_id
-            WHERE l.company_id = %(company_id)s
+            WHERE l.company_id = ANY(%(company_ids)s)
               AND l.parent_state = 'posted'
               AND a.account_type IN ('expense', 'expense_depreciation', 'expense_direct_cost')
               AND l.date BETWEEN %(previous_month_start)s AND %(today)s
             GROUP BY l.account_id
             """,
             {
-                "company_id": company.id,
+                "company_ids": company_ids,
                 "today": today,
                 "month_start": month_start,
                 "previous_month_start": previous_month_start,
@@ -441,7 +465,8 @@ class BiztrasFinanceDashboard(models.AbstractModel):
         updated_at = fields.Datetime.context_timestamp(self, fields.Datetime.now())
 
         return {
-            "currency": company.currency_id.symbol or company.currency_id.name,
+            "currency": primary_company.currency_id.symbol or primary_company.currency_id.name,
+            "company_ids": company_ids,
             "report_date": today.strftime("%d %b %Y"),
             "report_date_iso": fields.Date.to_string(today),
             "period": period,

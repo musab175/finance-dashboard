@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Finance Dashboard',
-    'version': '17.0.1.0.0',
+    'version': '17.0.4.0.0',
     'category': 'Accounting/Accounting',
     'summary': 'Custom KPI finance dashboard (Cash & Bank, Sales, AR/AP, P&L, Aging)',
     'author': 'Your Company',
     'license': 'LGPL-3',
     'depends': ['base', 'web', 'account', 'sale'],
     'data': [
+        'security/ir.model.access.csv',
         'views/finance_dashboard_views.xml',
+        'data/ir_cron_data.xml',
     ],
     'assets': {
         'web.assets_backend': [

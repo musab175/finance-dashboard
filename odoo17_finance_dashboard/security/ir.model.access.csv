@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_finance_dashboard_category_sales_daily,finance.dashboard.category.sales.daily,model_finance_dashboard_category_sales_daily,base.group_user,1,1,1,1
+access_finance_dashboard_category_sales_coverage,finance.dashboard.category.sales.coverage,model_finance_dashboard_category_sales_coverage,base.group_user,1,1,1,1
