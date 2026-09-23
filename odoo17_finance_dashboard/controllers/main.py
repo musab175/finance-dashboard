@@ -81,13 +81,59 @@ class FinanceDashboardController(http.Controller):
             return None
         return round((current - previous) / abs(previous) * 100, 1)
 
+    # T-1 reporting policy. The dashboard deliberately lags one day: opened
+    # today it reports through yesterday. Without this the KPIs move all day
+    # as users enter and back-date work, so two people looking minutes apart
+    # legitimately disagree.
+    #
+    # The lag is applied to the ACCOUNTING date (account_move_line.date),
+    # never to create_date. That distinction is the whole point: a document
+    # entered today but dated yesterday BELONGS to yesterday and is picked up
+    # at the next refresh. Filtering on create_date would permanently exclude
+    # it, which would silently understate closed periods.
+    REPORTING_LAG_DAYS = 1
+
+    def _reporting_cutoff(self):
+        """Latest accounting date the dashboard may show."""
+        return date.today() - timedelta(days=self.REPORTING_LAG_DAYS)
+
     def _parse_as_of(self, value):
+        """Reporting date, never later than the T-1 cutoff.
+
+        A requested date in the past is honoured unchanged; one reaching into
+        today or the future is clamped. Without the clamp a user could pick
+        today in the date filter and get a figure that keeps changing under
+        them - exactly what the lag exists to prevent.
+        """
+        cutoff = self._reporting_cutoff()
         if value:
             try:
-                return date.fromisoformat(value)
+                return min(date.fromisoformat(value), cutoff)
             except ValueError:
                 pass
-        return date.today()
+        return cutoff
+
+    def _reporting_vintage(self, company_ids):
+        """When the reporting tables were last rebuilt, for auditability.
+
+        Read from finance_dashboard_coverage, which 04_backfill_expense_and_derived.sql
+        stamps on every refresh. Deliberately does NOT report covered_to: that
+        column holds MAX(date) from the ledger, which this dataset pushes to
+        2205-10-18 because of far-future-dated entries, so it cannot be used
+        to describe how current the data is.
+        """
+        try:
+            request.env.cr.execute(
+                """SELECT MAX(last_refresh_at) AS refreshed_at,
+                          bool_and(COALESCE(last_refresh_ok, false)) AS all_ok
+                     FROM finance_dashboard_coverage
+                    WHERE company_id = ANY(%s)""",
+                (list(company_ids),),
+            )
+            return request.env.cr.dictfetchone() or {}
+        except Exception:
+            # Coverage is metadata, not a KPI - never fail the dashboard for it.
+            return {}
 
     def _period_bounds(self, as_of, period):
         """Return (period_start, period_end) for the selected period, ending on as_of."""
@@ -113,6 +159,173 @@ class FinanceDashboardController(http.Controller):
             cmp_start = cmp_end - timedelta(days=length)
         return cmp_start, cmp_end
 
+    def _sum_balance(self, domain, date_to):
+        """Sum `balance` exactly the way Odoo's own financial reports do:
+        scale every line by its company's conversion rate and round it to the
+        display currency's precision *before* summing, rather than summing
+        raw values. Mirrors the query in account_reports/models/
+        account_report.py (_compute_formula_batch_with_engine_domain).
+        account_move_line.balance is stored in the line's own company
+        currency, so the rate is what keeps a multi-currency group from
+        adding unlike units together.
+
+        Fast path: when every company in scope already shares the display
+        currency (true for all 10 companies here today), the conversion is
+        mathematically a no-op, but the VALUES-joined query still costs
+        real time on a large scan - measured at 27-28s per Working Capital
+        call vs. 14.8s for a plain SUM(balance) on the identical domain.
+        Skip the join in that case and only pay for it once a genuinely
+        multi-currency company is added."""
+        Aml = request.env['account.move.line'].sudo()
+        companies = request.env['res.company'].sudo().search([])
+        target = request.env.company.currency_id
+
+        if all(c.currency_id == target for c in companies):
+            res = Aml.read_group(domain, ['balance:sum'], [])
+            return res[0]['balance'] or 0.0 if res else 0.0
+
+        tables, where_clause, where_params = Aml._where_calc(domain).get_sql()
+        ct_rows, ct_params = [], []
+        for company in companies:
+            rate = 1.0 if company.currency_id == target else company.currency_id._convert(
+                1.0, target, company, date_to, round=False)
+            ct_rows.append('(%s, %s, %s)')
+            ct_params += [company.id, rate, target.decimal_places]
+
+        request.env.cr.execute(
+            f"""
+            SELECT COALESCE(SUM(ROUND(
+                       (account_move_line.balance * ct.rate)::numeric, ct.precision)), 0.0)
+            FROM {tables}
+            JOIN (VALUES {', '.join(ct_rows)}) AS ct(company_id, rate, precision)
+              ON ct.company_id = account_move_line.company_id
+            WHERE {where_clause}
+            """,
+            ct_params + where_params,
+        )
+        return request.env.cr.fetchone()[0] or 0.0
+
+    # ------------------------------------------------------------------ #
+    # Summary layer (finance_dashboard_* tables)
+    #
+    # Every figure below comes from the pre-aggregated summary tables
+    # rather than the ledger. Two rules, and they are not interchangeable:
+    #
+    #   FLOW columns (sales, cogs, opex, other_income) are daily totals -
+    #   SUM them across the requested range.
+    #
+    #   SNAPSHOT columns are stored as daily DELTAS. A balance "as of" a
+    #   date is the cumulative sum of deltas up to it, so they are summed
+    #   from inception to date_to and never over a range. Summing a
+    #   snapshot column across a range would double-count.
+    # ------------------------------------------------------------------ #
+
+    _FLOW_COLUMNS = ('sales', 'cogs', 'opex', 'other_income', 'depreciation')
+    _SNAPSHOT_COLUMNS = (
+        'cash_bank_delta', 'ar_delta', 'ap_delta', 'ar_ic_delta', 'ap_ic_delta',
+        'other_current_assets_delta', 'other_current_liabilities_delta',
+    )
+
+    def _prefetch_summary(self, company_ids, ranges, snap_dates):
+        """Fetch every flow and snapshot figure the request needs in TWO
+        queries instead of one per measure.
+
+        The database is remote, so each round trip costs ~60-70ms
+        regardless of how trivial the query is - measured: a flow query
+        executes in 0.5ms but the controller sees 70ms. With ~31 separate
+        reads that was ~2.2s of the request spent purely waiting on the
+        network. Batching collapses it.
+
+        `ranges`    : {name: (date_from, date_to)} for flow columns
+        `snap_dates`: {name: date} for snapshot (cumulative) columns
+        Results land in self._summary_cache for _summary_flow /
+        _summary_snapshot to read.
+        """
+        cache = {}
+
+        if ranges:
+            sel, params = [], {'companies': list(company_ids)}
+            for rname, (dfrom, dto) in ranges.items():
+                params[f'{rname}_f'] = dfrom
+                params[f'{rname}_t'] = dto
+                for col in self._FLOW_COLUMNS:
+                    sel.append(
+                        f"COALESCE(SUM(CASE WHEN date BETWEEN %({rname}_f)s AND %({rname}_t)s "
+                        f"THEN {col} ELSE 0 END), 0) AS {col}__{rname}"
+                    )
+            bounds = list(ranges.values())
+            params['lo'] = min(b[0] for b in bounds)
+            params['hi'] = max(b[1] for b in bounds)
+            request.env.cr.execute(
+                f"""SELECT {', '.join(sel)} FROM finance_dashboard_daily
+                    WHERE company_id = ANY(%(companies)s)
+                      AND date BETWEEN %(lo)s AND %(hi)s""",
+                params,
+            )
+            row = request.env.cr.dictfetchone() or {}
+            for key, val in row.items():
+                col, rname = key.split('__')
+                cache[('flow', col, rname)] = float(val or 0.0)
+
+        if snap_dates:
+            sel, params = [], {'companies': list(company_ids)}
+            for dname, dto in snap_dates.items():
+                params[f'{dname}_d'] = dto
+                for col in self._SNAPSHOT_COLUMNS:
+                    sel.append(
+                        f"COALESCE(SUM(CASE WHEN date <= %({dname}_d)s "
+                        f"THEN {col} ELSE 0 END), 0) AS {col}__{dname}"
+                    )
+            params['hi'] = max(snap_dates.values())
+            request.env.cr.execute(
+                f"""SELECT {', '.join(sel)} FROM finance_dashboard_daily
+                    WHERE company_id = ANY(%(companies)s) AND date <= %(hi)s""",
+                params,
+            )
+            row = request.env.cr.dictfetchone() or {}
+            for key, val in row.items():
+                col, dname = key.split('__')
+                cache[('snap', col, dname)] = float(val or 0.0)
+
+        self._summary_cache = cache
+
+    def _summary_flow(self, column, range_name):
+        """A flow measure for a named range, from the prefetched batch."""
+        if column not in self._FLOW_COLUMNS:
+            raise ValueError("not a flow column: %s" % column)
+        return self._summary_cache[('flow', column, range_name)]
+
+    def _summary_snapshot(self, column, date_name):
+        """A snapshot (cumulative) measure at a named as-of date, from the
+        prefetched batch."""
+        if column not in self._SNAPSHOT_COLUMNS:
+            raise ValueError("not a snapshot column: %s" % column)
+        return self._summary_cache[('snap', column, date_name)]
+
+    def _excluded_journal_ids(self):
+        """Journals to count for AR/AP, after removing whatever journal
+        groups exclude (here, the "P & L Without Inter Company" group,
+        which strips the intercompany sales/purchase journals). An
+        intercompany invoice is one group company billing another:
+        consolidated across all 10 companies it is not money owed by
+        anyone outside the group, so counting it overstates AR/AP by
+        the intercompany amount (measured at AED 13.5m of AR on
+        2026-03-18).
+
+        Deliberately NOT applied as `journal_id NOT IN (...)` /
+        `!= ALL(...)` on the main totals query - neither can use
+        idx_am_fd_company_type_state_date (company_id, move_type, state,
+        invoice_date) the way the existing filter-free query does.
+        Measured: unfiltered query 4.6s; same query with
+        `journal_id != ALL(2 ids)` still running after 4+ minutes - that
+        regression is what took the dashboard down. `_ar_ap_aggregate`
+        instead runs the fast unfiltered query and a second, separately
+        fast query scoped to just these (few, highly selective) journals
+        via `= ANY(...)`, then subtracts in Python - same result, no
+        index regression."""
+        return request.env['account.journal.group'].sudo().search([]) \
+            .mapped('excluded_journal_ids').ids
+
     def _account_balance(self, account_ids, date_to, company_ids, date_from=None):
         if not account_ids:
             return 0.0
@@ -124,8 +337,43 @@ class FinanceDashboardController(http.Controller):
         ]
         if date_from:
             domain.append(('date', '>=', date_from))
-        res = request.env['account.move.line'].sudo().read_group(domain, ['balance:sum'], [])
-        return res[0]['balance'] or 0.0 if res else 0.0
+        return self._sum_balance(domain, date_to)
+
+    def _account_type_balance(self, account_types, date_to, company_ids):
+        """Point-in-time GL balance (as of date_to) for accounts of the
+        given account_type(s) - used for Working Capital's non-AR/AP
+        current asset/liability components (inventory/stock valuation,
+        prepayments, staff advances, accrued liabilities, etc.). Unlike
+        Total Receivables/Payables, these aren't invoice-residual-based -
+        there's no equivalent "open document" concept for them - so they're
+        read directly from the ledger, the same way Cash & Bank already is.
+        Returns Odoo's raw debit-minus-credit balance: positive for a
+        healthy asset_current balance, negative for a healthy
+        liability_current balance (callers apply abs() where a liability
+        magnitude is needed, matching how Payables is already handled).
+
+        Filters on a resolved account_id list rather than
+        ('account_id.account_type', 'in', ...) directly: that related-field
+        domain forces a join against account_account for every candidate
+        line, which the planner can't push into
+        idx_aml_fd_balance_by_account (company_id, account_id, date) -
+        measured at 32s for a single asset_current call on this data.
+        Resolving to account_id first (same approach already used for
+        Cash & Bank) lets it hit that index: 14.8s measured, and the
+        account_type -> account_ids lookup itself is a trivial metadata
+        query."""
+        account_ids = request.env['account.account'].sudo().search([
+            ('account_type', 'in', account_types),
+        ]).ids
+        if not account_ids:
+            return 0.0
+        domain = [
+            ('account_id', 'in', account_ids),
+            ('parent_state', '=', 'posted'),
+            ('company_id', 'in', company_ids),
+            ('date', '<=', date_to),
+        ]
+        return self._sum_balance(domain, date_to)
 
     def _invoice_total(self, move_types, date_from, date_to, company_ids, field='amount_untaxed_signed'):
         domain = [
@@ -162,33 +410,20 @@ class FinanceDashboardController(http.Controller):
         res = request.env['account.move.line'].sudo().read_group(domain, ['balance:sum'], [])
         return -(res[0]['balance'] or 0.0) if res else 0.0
 
-    def _daily_sales_map(self, move_types, date_from, date_to, company_ids, field='amount_untaxed_signed'):
-        """Pre-aggregate posted invoice totals by exact calendar date, in
-        PostgreSQL, so the sales-trend loop can sum arbitrary day-ranges in
-        Python against a small (at most one row per day) dict instead of
-        iterating every matching invoice. `field` is restricted to a fixed
-        whitelist since it's interpolated into the SQL column list.
-        """
-        if field not in ('amount_untaxed_signed', 'amount_total_signed', 'amount_residual'):
-            raise ValueError("Unsupported field for _daily_sales_map: %r" % (field,))
+    def _daily_sales_map(self, date_from, date_to, company_ids):
+        """Daily sales totals for the trend chart, from the summary layer.
+        One row per (company, date) already, so this is a small grouped read
+        rather than an aggregate over every posted invoice."""
         cr = request.env.cr
         cr.execute(
-            f"""
-            SELECT invoice_date, SUM({field}) AS total
-            FROM account_move
-            WHERE move_type = ANY(%(move_types)s)
-              AND state = 'posted'
-              AND company_id = ANY(%(company_ids)s)
-              AND invoice_date >= %(date_from)s
-              AND invoice_date <= %(date_to)s
-            GROUP BY invoice_date
+            """
+            SELECT date, COALESCE(SUM(sales), 0)
+            FROM finance_dashboard_daily
+            WHERE company_id = ANY(%(company_ids)s)
+              AND date >= %(date_from)s AND date <= %(date_to)s
+            GROUP BY date
             """,
-            {
-                'move_types': move_types,
-                'company_ids': company_ids,
-                'date_from': date_from,
-                'date_to': date_to,
-            },
+            {'company_ids': list(company_ids), 'date_from': date_from, 'date_to': date_to},
         )
         return {row[0]: float(row[1] or 0.0) for row in cr.fetchall()}
 
@@ -200,84 +435,167 @@ class FinanceDashboardController(http.Controller):
             d += timedelta(days=1)
         return total
 
-    def _ar_ap_aggregate(self, move_types, date_to, company_ids, abs_for_top=False, include_top=True):
-        """SQL-side replacement for fetching every open AR/AP move into
-        Python and looping over it. Returns the same information the
-        original per-move loop computed - total open amount (raw sum, not
-        abs'd here; callers apply abs() at the same point the original code
-        did, e.g. only on the final AP total, not per line - to preserve
-        exact existing sign semantics), the four aging buckets using the
-        exact same day-boundary rule as the original if/elif/elif/else
-        chain (a not-yet-due or exactly-due move still falls in '0-30',
-        matching current behavior), and the top-5 overdue (days > 0)
-        partners by amount.
-
-        `abs_for_top`: the original code used abs(amount_residual) when
-        building the AP top-suppliers ranking specifically (but not for the
-        AP total). Same behavior here.
-
-        `include_top`: the top-5 query and its res.partner name lookup are
-        a separate round-trip (confirmed via trace: comparison-period calls
-        only ever read `total`/`buckets['90+']`, never `top`). Measured
-        (odoo shell, live data, 3 company scopes): this skippable work costs
-        ~0.49-0.59s per call, roughly matching or exceeding the totals+
-        buckets query itself. Set False to skip it and return `top: []`.
-        """
+    def _arap_batch(self, period_end, cmp_end, company_ids):
+        """All AR/AP aging buckets (both sides, both as-of dates) in ONE
+        query, and both top-5 rankings in ONE more. Same rationale as
+        _prefetch_summary: the remote database costs ~60-70ms per round
+        trip, so four bucket reads and two ranking reads were mostly spent
+        waiting rather than working."""
         cr = request.env.cr
-        due_expr = "COALESCE(invoice_date_due, invoice_date)"
-        base_where = """
-            move_type = ANY(%(move_types)s) AND state = 'posted'
-            AND payment_state = ANY(%(payment_states)s) AND company_id = ANY(%(company_ids)s)
-            AND invoice_date <= %(date_to)s
-        """
-        params = {
-            'move_types': move_types,
-            'payment_states': ['not_paid', 'partial'],
-            'company_ids': company_ids,
-            'date_to': date_to,
-        }
+        params = {'companies': list(company_ids), 'pe': period_end, 'ce': cmp_end}
+        age_pe = "(%(pe)s::date - COALESCE(date_maturity, date))"
+        age_ce = "(%(ce)s::date - COALESCE(date_maturity, date))"
+        bands = [('cur', '<= 0'), ('b1', 'BETWEEN 1 AND 30'), ('b2', 'BETWEEN 31 AND 60'),
+                 ('b3', 'BETWEEN 61 AND 90'), ('b4', '> 90')]
+        sel = []
+        for side, col in (('ar', 'ar_amount'), ('ap', 'ap_amount')):
+            for dname, age, dcol in (('period', age_pe, '%(pe)s'), ('cmp', age_ce, '%(ce)s')):
+                for band, cond in bands:
+                    sel.append(
+                        f"COALESCE(SUM(CASE WHEN date <= {dcol} AND {age} {cond} "
+                        f"THEN {col} ELSE 0 END), 0) AS {side}_{dname}_{band}"
+                    )
+        cr.execute(
+            f"""SELECT {', '.join(sel)} FROM finance_dashboard_aging_daily
+                WHERE company_id = ANY(%(companies)s)
+                  AND date <= GREATEST(%(pe)s::date, %(ce)s::date)""",
+            params,
+        )
+        buckets = cr.dictfetchone() or {}
 
+        # Both rankings in one pass over the partner-level table.
         cr.execute(
             f"""
-            SELECT
-                COALESCE(SUM(amount_residual), 0) AS total,
-                COALESCE(SUM(CASE WHEN (%(date_to)s::date - {due_expr}) <= 30
-                                   THEN amount_residual ELSE 0 END), 0) AS b_0_30,
-                COALESCE(SUM(CASE WHEN (%(date_to)s::date - {due_expr}) BETWEEN 31 AND 60
-                                   THEN amount_residual ELSE 0 END), 0) AS b_31_60,
-                COALESCE(SUM(CASE WHEN (%(date_to)s::date - {due_expr}) BETWEEN 61 AND 90
-                                   THEN amount_residual ELSE 0 END), 0) AS b_61_90,
-                COALESCE(SUM(CASE WHEN (%(date_to)s::date - {due_expr}) > 90
-                                   THEN amount_residual ELSE 0 END), 0) AS b_90_plus
-            FROM account_move
-            WHERE {base_where}
+            SELECT side, partner_id, amt, days FROM (
+              SELECT 'ar' AS side, partner_id,
+                     SUM(ar_amount) AS amt, MAX({age_pe}) AS days,
+                     ROW_NUMBER() OVER (ORDER BY SUM(ar_amount) DESC) AS rn
+              FROM finance_dashboard_arap_daily
+              WHERE company_id = ANY(%(companies)s) AND date <= %(pe)s
+                AND NOT is_intercompany AND partner_id IS NOT NULL AND {age_pe} > 0
+              GROUP BY partner_id HAVING SUM(ar_amount) > 0
+              UNION ALL
+              SELECT 'ap', partner_id,
+                     -SUM(ap_amount), MAX({age_pe}),
+                     ROW_NUMBER() OVER (ORDER BY -SUM(ap_amount) DESC)
+              FROM finance_dashboard_arap_daily
+              WHERE company_id = ANY(%(companies)s) AND date <= %(pe)s
+                AND NOT is_intercompany AND partner_id IS NOT NULL AND {age_pe} > 0
+              GROUP BY partner_id HAVING -SUM(ap_amount) > 0
+            ) x WHERE rn <= 5
             """,
             params,
         )
-        total, b_0_30, b_31_60, b_61_90, b_90_plus = cr.fetchone()
+        top_rows = cr.fetchall()
+        names = {}
+        if top_rows:
+            for pr in request.env['res.partner'].sudo().browse(list({r[1] for r in top_rows})):
+                names[pr.id] = pr.name
+        tops = {'ar': [], 'ap': []}
+        for side, pid, amt, days in top_rows:
+            tops[side].append({'name': names.get(pid, 'Unknown'),
+                               'amount': round(float(amt or 0), 2), 'days': int(days or 0)})
+
+        out = {}
+        for side in ('ar', 'ap'):
+            sign = 1 if side == 'ar' else -1
+            for dname in ('period', 'cmp'):
+                total = sign * (
+                    self._summary_snapshot(f'{side}_delta', dname)
+                    - self._summary_snapshot(f'{side}_ic_delta', dname)
+                )
+                out[(side, dname)] = {
+                    'total': total,
+                    'buckets': {
+                        'current': sign * float(buckets[f'{side}_{dname}_cur'] or 0.0),
+                        '1-30':    sign * float(buckets[f'{side}_{dname}_b1'] or 0.0),
+                        '31-60':   sign * float(buckets[f'{side}_{dname}_b2'] or 0.0),
+                        '61-90':   sign * float(buckets[f'{side}_{dname}_b3'] or 0.0),
+                        '90+':     sign * float(buckets[f'{side}_{dname}_b4'] or 0.0),
+                    },
+                    'top': tops[side] if dname == 'period' else [],
+                }
+        return out
+
+    def _ar_ap_aggregate(self, side, date_to, date_name, company_ids, include_top=True):
+        """AR/AP totals, aging buckets and top-5 overdue partners, read from
+        the summary layer rather than the ledger.
+
+        Basis (verified against Odoo's Balance Sheet on 2026-03-18, all 10
+        companies): general-ledger balances on account_type
+        asset_receivable / liability_payable with non_trade = false,
+        excluding the intercompany journals. That reproduces Odoo exactly -
+        11,762,424.19 for AR and -4,740,442.28 for AP. The previous
+        invoice-residual basis could not: it read today's residual rather
+        than the residual as of the report date, had no notion of
+        non_trade, and summed unsigned residuals so credit notes added
+        instead of netting down.
+
+        `side` is 'ar' or 'ap'. AP is returned negated, matching Odoo's
+        '-sum' subformula on its Payables line, so it can be displayed
+        directly without abs().
+
+        Aging cannot be pre-bucketed - a line's bucket depends on
+        as_of - date_maturity - so buckets are computed at read time from
+        finance_dashboard_arap_daily. Note these are ledger balances, so
+        buckets can legitimately be negative where payments land against a
+        maturity date.
+        """
+        if side not in ('ar', 'ap'):
+            raise ValueError("side must be 'ar' or 'ap'")
+        cr = request.env.cr
+        sign = 1 if side == 'ar' else -1
+        amount_col = 'ar_amount' if side == 'ar' else 'ap_amount'
+
+        total = sign * (
+            self._summary_snapshot(f'{side}_delta', date_name)
+            - self._summary_snapshot(f'{side}_ic_delta', date_name)
+        )
+
+        age = "(%(date_to)s::date - COALESCE(date_maturity, date))"
+        params = {'date_to': date_to, 'company_ids': list(company_ids)}
+        cr.execute(
+            f"""
+            SELECT
+                COALESCE(SUM(CASE WHEN {age} <= 0            THEN {amount_col} ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN {age} BETWEEN 1 AND 30  THEN {amount_col} ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN {age} BETWEEN 31 AND 60 THEN {amount_col} ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN {age} BETWEEN 61 AND 90 THEN {amount_col} ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN {age} > 90            THEN {amount_col} ELSE 0 END), 0)
+            FROM finance_dashboard_aging_daily
+            WHERE company_id = ANY(%(company_ids)s)
+              AND date <= %(date_to)s
+            """,
+            params,
+        )
+        b_current, b_1_30, b_31_60, b_61_90, b_90_plus = [
+            sign * float(v or 0.0) for v in cr.fetchone()
+        ]
 
         top = []
         if include_top:
-            amt_expr = "ABS(amount_residual)" if abs_for_top else "amount_residual"
             cr.execute(
                 f"""
-                SELECT partner_id, SUM({amt_expr}) AS amt,
-                       MAX((%(date_to)s::date - {due_expr})) AS days
-                FROM account_move
-                WHERE {base_where}
-                  AND (%(date_to)s::date - {due_expr}) > 0
+                SELECT partner_id,
+                       {sign} * SUM({amount_col}) AS amt,
+                       MAX({age}) AS days
+                FROM finance_dashboard_arap_daily
+                WHERE company_id = ANY(%(company_ids)s)
+                  AND date <= %(date_to)s
+                  AND NOT is_intercompany
                   AND partner_id IS NOT NULL
+                  AND {age} > 0
                 GROUP BY partner_id
+                HAVING {sign} * SUM({amount_col}) > 0
                 ORDER BY amt DESC
                 LIMIT 5
                 """,
                 params,
             )
             top_rows = cr.fetchall()
-            partner_ids = [r[0] for r in top_rows]
             names = {}
-            if partner_ids:
-                for p in request.env['res.partner'].sudo().browse(partner_ids):
+            if top_rows:
+                for p in request.env['res.partner'].sudo().browse([r[0] for r in top_rows]):
                     names[p.id] = p.name
             top = [
                 {'name': names.get(pid, 'Unknown'), 'amount': round(float(amt or 0), 2), 'days': int(days or 0)}
@@ -285,12 +603,13 @@ class FinanceDashboardController(http.Controller):
             ]
 
         return {
-            'total': float(total or 0.0),
+            'total': total,
             'buckets': {
-                '0-30': float(b_0_30 or 0.0),
-                '31-60': float(b_31_60 or 0.0),
-                '61-90': float(b_61_90 or 0.0),
-                '90+': float(b_90_plus or 0.0),
+                'current': b_current,
+                '1-30': b_1_30,
+                '31-60': b_31_60,
+                '61-90': b_61_90,
+                '90+': b_90_plus,
             },
             'top': top,
         }
@@ -331,54 +650,78 @@ class FinanceDashboardController(http.Controller):
         period_name = {'month': 'This Month', 'quarter': 'This Quarter', 'year': 'This Year'}.get(period, 'This Month')
         compare_label = 'Last Year' if compare == 'previous_year' else 'Last Month'
 
+        # "Today" mapped onto the comparison range, so Today's Sales compares
+        # like for like instead of one day against a whole period.
+        cmp_today = cmp_start + (today - period_start) if period_start <= today <= period_end else None
+
+        # Single batched fetch for every flow and snapshot figure below.
+        _t0 = time.perf_counter()
+        self._prefetch_summary(
+            company_ids,
+            ranges={
+                'today': (today, today),
+                'period': (period_start, period_end),
+                'cmp': (cmp_start, cmp_end),
+                'cmptoday': (cmp_today, cmp_today) if cmp_today else (cmp_start, cmp_start),
+            },
+            snap_dates={'period': period_end, 'cmp': cmp_end},
+        )
+        timings.append(('prefetch_summary', time.perf_counter() - _t0))
+
         # ---- Cash & Bank Balance ----
-        journals = request.env['account.journal'].sudo().search([
-            ('type', 'in', ['bank', 'cash']), ('company_id', 'in', company_ids),
-        ])
-        cash_accounts = journals.mapped('default_account_id').ids
-        cash_bank_now = _timed('account_balance_current', self._account_balance, cash_accounts, period_end, company_ids)
-        cash_bank_cmp = _timed('account_balance_cmp', self._account_balance, cash_accounts, cmp_end, company_ids)
+        # Matches Odoo's own Balance Sheet "Bank and Cash Accounts" line
+        # (account_report_expression id 53: account_id.account_type =
+        # 'asset_cash'), not a journal-derived account list - a journal's
+        # default_account_id can miss accounts that no journal points to
+        # (e.g. this DB's "Petty Cash - HR" account, id 3001/code 101211,
+        # which is asset_cash-typed but isn't any journal's default
+        # account). No company filter here: in this DB every asset_cash
+        # account is owned by the parent company, shared across all
+        # sub-companies' journals - company scoping is applied below via
+        # each move line's own company_id, not the account's owner.
+        cash_bank_now = _timed('cash_snapshot', self._summary_snapshot, 'cash_bank_delta', 'period')
+        cash_bank_cmp = _timed('cash_snapshot_cmp', self._summary_snapshot, 'cash_bank_delta', 'cmp')
 
         # ---- Sales (Today literal / selected period) ----
-        today_sales = _timed('invoice_total_today', self._invoice_total, ['out_invoice', 'out_refund'], today, today, company_ids)
-        period_sales = _timed('invoice_total_period', self._invoice_total, ['out_invoice', 'out_refund'], period_start, period_end, company_ids)
-        cmp_sales = _timed('invoice_total_cmp', self._invoice_total, ['out_invoice', 'out_refund'], cmp_start, cmp_end, company_ids)
+        today_sales = _timed('sales_today', self._summary_flow, 'sales', 'today')
+        period_sales = _timed('sales_period', self._summary_flow, 'sales', 'period')
+        cmp_sales = _timed('sales_cmp', self._summary_flow, 'sales', 'cmp')
 
         # "Today" mapped onto the comparison range, so Today's Sales has a
         # like-for-like comparison instead of a single day vs. a whole period.
-        if period_start <= today <= period_end:
-            cmp_today = cmp_start + (today - period_start)
-            cmp_today_sales = _timed('invoice_total_cmp_today', self._invoice_total, ['out_invoice', 'out_refund'], cmp_today, cmp_today, company_ids)
-        else:
-            cmp_today_sales = 0.0
+        cmp_today_sales = (
+            _timed('sales_cmp_today', self._summary_flow, 'sales', 'cmptoday')
+            if cmp_today else 0.0
+        )
 
         # ---- COGS / Gross Profit ----
-        period_cogs = _timed('expense_total_cogs_period', self._expense_total, period_start, period_end, ['expense_direct_cost'], company_ids)
-        cmp_cogs = _timed('expense_total_cogs_cmp', self._expense_total, cmp_start, cmp_end, ['expense_direct_cost'], company_ids)
+        period_cogs = _timed('cogs_period', self._summary_flow, 'cogs', 'period')
+        cmp_cogs = _timed('cogs_cmp', self._summary_flow, 'cogs', 'cmp')
         gross_profit = period_sales - period_cogs
         gross_profit_pct = round((gross_profit / period_sales) * 100, 1) if period_sales else 0.0
         cmp_gross_profit = cmp_sales - cmp_cogs
         cmp_gross_profit_pct = round((cmp_gross_profit / cmp_sales) * 100, 1) if cmp_sales else 0.0
 
         # ---- Operating Expenses, Other Income & Net Profit ----
-        period_opex = _timed('expense_total_opex_period', self._expense_total, period_start, period_end, ['expense'], company_ids)
-        cmp_opex = _timed('expense_total_opex_cmp', self._expense_total, cmp_start, cmp_end, ['expense'], company_ids)
-        period_other_income = _timed('income_total_period', self._income_total, period_start, period_end, ['income_other'], company_ids)
-        cmp_other_income = _timed('income_total_cmp', self._income_total, cmp_start, cmp_end, ['income_other'], company_ids)
+        period_opex = _timed('opex_period', self._summary_flow, 'opex', 'period')
+        cmp_opex = _timed('opex_cmp', self._summary_flow, 'opex', 'cmp')
+        period_other_income = _timed('other_income_period', self._summary_flow, 'other_income', 'period')
+        cmp_other_income = _timed('other_income_cmp', self._summary_flow, 'other_income', 'cmp')
         net_profit = gross_profit - period_opex + period_other_income
         cmp_net_profit = cmp_gross_profit - cmp_opex + cmp_other_income
 
         # ---- AR / AP (open invoices/bills, as of period_end and comparison end) ----
-        ar_summary = _timed('ar_aggregate_current', self._ar_ap_aggregate, ['out_invoice', 'out_refund'], period_end, company_ids)
-        ap_summary = _timed('ap_aggregate_current', self._ar_ap_aggregate, ['in_invoice', 'in_refund'], period_end, company_ids, abs_for_top=True)
+        _arap = _timed('arap_batch', self._arap_batch, period_end, cmp_end, company_ids)
+        ar_summary = _arap[('ar', 'period')]
+        ap_summary = _arap[('ap', 'period')]
         total_ar = ar_summary['total']
         total_ap = ap_summary['total']
 
         # include_top=False: cmp_ar_summary/cmp_ap_summary only ever read
         # ['total'] and (for AR) ['buckets']['90+'] downstream - confirmed
         # by exhaustive trace, ['top'] is never referenced for either.
-        cmp_ar_summary = _timed('ar_aggregate_cmp', self._ar_ap_aggregate, ['out_invoice', 'out_refund'], cmp_end, company_ids, include_top=False)
-        cmp_ap_summary = _timed('ap_aggregate_cmp', self._ar_ap_aggregate, ['in_invoice', 'in_refund'], cmp_end, company_ids, include_top=False)
+        cmp_ar_summary = _arap[('ar', 'cmp')]
+        cmp_ap_summary = _arap[('ap', 'cmp')]
         cmp_total_ar = cmp_ar_summary['total']
         cmp_total_ap = cmp_ap_summary['total']
         cmp_90_plus = cmp_ar_summary['buckets']['90+']
@@ -395,9 +738,44 @@ class FinanceDashboardController(http.Controller):
         # ---- Top overdue suppliers ----
         top_suppliers = ap_summary['top']
 
-        # ---- Working Capital (simplified: Cash & Bank + AR - AP) ----
-        working_capital = cash_bank_now + total_ar - abs(total_ap)
-        cmp_working_capital = cash_bank_cmp + cmp_total_ar - abs(cmp_total_ap)
+        # ---- Working Capital (standard: Current Assets - Current Liabilities) ----
+        # Was previously a simplification (Cash + AR - AP only), which
+        # silently excluded every other current asset/liability - for this
+        # business, dominated by inventory (Stock Valuation / Goods
+        # Delivered accounts under asset_current), worth ~4.7M and the
+        # single largest account category in the database by posted-line
+        # volume. AR/AP still use the invoice-residual figures already
+        # computed above (proven, via direct customer-level tracing, to be
+        # immune to the raw-GL distortion from unreconciled payments this
+        # project found) - only the *other* current assets/liabilities
+        # (inventory, prepayments, staff advances, accrued liabilities,
+        # etc.) are added from the raw ledger, since they have no
+        # equivalent "open invoice" concept to read instead.
+        other_current_assets = _timed('other_current_assets', self._summary_snapshot, 'other_current_assets_delta', 'period')
+        cmp_other_current_assets = _timed('other_current_assets_cmp', self._summary_snapshot, 'other_current_assets_delta', 'cmp')
+        other_current_liabilities = _timed('other_current_liabilities', self._summary_snapshot, 'other_current_liabilities_delta', 'period')
+        cmp_other_current_liabilities = _timed('other_current_liabilities_cmp', self._summary_snapshot, 'other_current_liabilities_delta', 'cmp')
+
+        # Sign convention: both _delta columns store the raw SUM(balance).
+        # Odoo's Balance Sheet renders Current Liabilities with subformula
+        # `-sum` (report line 61), so negating the stored balance gives the
+        # figure Odoo displays. `abs()` was wrong here: it is only equivalent
+        # while the balance is credit-heavy, and company 1's is debit-heavy
+        # (it holds the mirror leg of the subsidiaries' intercompany
+        # positions), where abs() forced a subtraction the ledger does not
+        # support - measured error AED 5,606,079.72 for company 1 and
+        # 4,966,411.97 consolidated at 2026-05-13.
+        current_liabilities = -other_current_liabilities
+        cmp_current_liabilities = -cmp_other_current_liabilities
+
+        working_capital = (
+            cash_bank_now + total_ar + other_current_assets
+            - total_ap - current_liabilities
+        )
+        cmp_working_capital = (
+            cash_bank_cmp + cmp_total_ar + cmp_other_current_assets
+            - cmp_total_ap - cmp_current_liabilities
+        )
 
         # ---- Sales trend: bucketed across the selected period vs comparison ----
         # Daily buckets for short periods (month), coarser buckets for
@@ -410,8 +788,8 @@ class FinanceDashboardController(http.Controller):
         else:
             step, label_fmt = 30, '%b %Y'
 
-        actual_daily = _timed('daily_sales_map_current', self._daily_sales_map, ['out_invoice', 'out_refund'], period_start, period_end, company_ids)
-        previous_daily = _timed('daily_sales_map_cmp', self._daily_sales_map, ['out_invoice', 'out_refund'], cmp_start, cmp_end, company_ids)
+        actual_daily = _timed('daily_sales_map_current', self._daily_sales_map, period_start, period_end, company_ids)
+        previous_daily = _timed('daily_sales_map_cmp', self._daily_sales_map, cmp_start, cmp_end, company_ids)
 
         labels, actual, previous = [], [], []
         i = 0
@@ -426,153 +804,77 @@ class FinanceDashboardController(http.Controller):
             previous.append(round(self._sum_range(previous_daily, c_start, c_end), 2))
             i += step
 
-              # ---- Sales by product category (selected period) ----
-        # Reporting-layer read with live-SQL fallback. The rollup table
-        # (finance_dashboard_category_sales_daily) and its explicit
-        # coverage tracking (finance_dashboard_category_sales_coverage)
-        # were validated against this exact live query before being wired
-        # in: exact accuracy across every company scope and date range
-        # tested (product/category/grand-total parity, 0-row symmetric
-        # diff), ~99.6% faster reads on the HORECA-historical case that
-        # motivated this work (20.9s -> ~0.08s), and correct behavior
-        # under refresh failure, concurrent reads, and missing/partial
-        # coverage. The live SQL below is UNCHANGED and stays as the
-        # fallback path - used whenever any selected company lacks full,
-        # successfully-refreshed rollup coverage for the requested range,
-        # so a stale or incomplete rollup can never silently produce a
-        # wrong number.
+        # ---- Sales by division (company) - selected period ----
+        # Served straight from finance_dashboard_daily, which is already
+        # grouped by (company_id, date): each division is one slice, never
+        # summed together. The old rollup table plus its live-SQL fallback
+        # and coverage tracking are gone - the summary layer covers all
+        # dates, so there is nothing to fall back to.
         _t0 = time.perf_counter()
         cr = request.env.cr
         cr.execute(
             """
-            SELECT company_id, covered_from, covered_to, last_refresh_ok
-            FROM finance_dashboard_category_sales_coverage
-            WHERE company_id = ANY(%(company_ids)s)
+            SELECT company_id, COALESCE(SUM(sales), 0)
+            FROM finance_dashboard_daily
+            WHERE company_id = ANY(%s) AND date >= %s AND date <= %s
+            GROUP BY company_id
+            HAVING COALESCE(SUM(sales), 0) <> 0
             """,
-            {'company_ids': company_ids},
+            [list(company_ids), period_start, period_end],
         )
-        _coverage = {row[0]: (row[1], row[2], row[3]) for row in cr.fetchall()}
-        _fully_covered = all(
-            cid in _coverage and _coverage[cid][2]
-            and _coverage[cid][0] <= period_start and _coverage[cid][1] >= period_end
-            for cid in company_ids
-        )
-        if _fully_covered:
-            cr.execute(
-                """
-                SELECT product_id, SUM(amount) AS total
-                FROM finance_dashboard_category_sales_daily
-                WHERE company_id = ANY(%(company_ids)s)
-                  AND date >= %(period_start)s AND date <= %(period_end)s
-                GROUP BY product_id
-                """,
-                {
-                    'company_ids': company_ids,
-                    'period_start': period_start,
-                    'period_end': period_end,
-                },
-            )
-            _category_sales_source = 'rollup'
-        else:
-            # Raw SQL with company_id filtered explicitly on BOTH
-            # account_move_line and account_move: a read_group() with a
-            # move_id.move_type domain path compiles to a LEFT JOIN where
-            # Postgres can't push company_id through to the account_move
-            # side, causing a full-table scan of account_move across
-            # every company (confirmed via EXPLAIN ANALYZE - ~47s of an
-            # ~83s total for this one query, on HORECA). Filtering
-            # company_id explicitly on both l and m lets the planner use
-            # an index on each side.
-            cr.execute(
-                """
-                SELECT l.product_id, SUM(l.price_subtotal) AS total
-                FROM account_move_line l
-                JOIN (
-                    SELECT id FROM account_move
-                    WHERE company_id = ANY(%(company_ids)s) AND move_type = 'out_invoice' AND state = 'posted'
-                      AND invoice_date >= %(period_start)s AND invoice_date <= %(period_end)s
-                ) m ON m.id = l.move_id
-                WHERE l.company_id = ANY(%(company_ids)s)
-                  AND l.parent_state = 'posted'
-                  AND l.product_id IS NOT NULL
-                  AND l.date >= %(period_start)s AND l.date <= %(period_end)s
-                GROUP BY l.product_id
-                """,
-                {
-                    'company_ids': company_ids,
-                    'period_start': period_start,
-                    'period_end': period_end,
-                },
-            )
-            _category_sales_source = 'live_sql'
-        product_totals = [{'product_id': row[0], 'price_subtotal': float(row[1] or 0.0)} for row in cr.fetchall()]
-        timings.append(('category_sales_sql_%s' % _category_sales_source, time.perf_counter() - _t0))
+        division_totals = {row[0]: float(row[1] or 0.0) for row in cr.fetchall()}
+        timings.append(('category_sales_summary', time.perf_counter() - _t0))
 
         _t0 = time.perf_counter()
-        product_ids = [r['product_id'] for r in product_totals]
-        # Bulk raw-SQL category lookup, replacing a per-record ORM browse
-        # loop over product.product.categ_id - that field is a non-stored
-        # related field (product_tmpl_id.categ_id), so each access went
-        # through the ORM's related-field resolution machinery rather than
-        # a direct column read. Measured (odoo shell, live data, 3 company
-        # scopes, cr.sql_log_count): ORM loop ~0.68-0.91s across 6 queries;
-        # this single query ~0.07-0.08s across 1 query - same results
-        # (verified via full dict equality), ~10-12x faster.
-        categ_by_product = {}
-        if product_ids:
-            cr.execute(
-                """
-                SELECT pp.id, pc.name
-                FROM product_product pp
-                JOIN product_template pt ON pt.id = pp.product_tmpl_id
-                LEFT JOIN product_category pc ON pc.id = pt.categ_id
-                WHERE pp.id = ANY(%(product_ids)s)
-                """,
-                {'product_ids': product_ids},
-            )
-            categ_by_product = {row[0]: (row[1] or 'Uncategorized') for row in cr.fetchall()}
-        cat_totals = {}
-        for r in product_totals:
-            cat = categ_by_product.get(r['product_id'], 'Uncategorized')
-            cat_totals[cat] = cat_totals.get(cat, 0.0) + r['price_subtotal']
-        category_sales = [
-            {'name': k, 'amount': round(v, 2)}
-            for k, v in sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)
-        ]
+        # Division (company) names for whichever companies actually had
+        # matching sales in this period - a selected company with zero
+        # matching sales simply doesn't appear as a slice (same "no
+        # fallback to a default" behavior the original per-category
+        # breakdown had for periods/companies with nothing to show).
+        _divisions = request.env['res.company'].sudo().browse(list(division_totals.keys()))
+        category_sales = sorted(
+            ({'name': c.name, 'amount': round(division_totals[c.id], 2)} for c in _divisions),
+            key=lambda r: r['amount'], reverse=True,
+        )
         timings.append(('category_sales_categ_lookup', time.perf_counter() - _t0))
-        _category_sales_product_count = len(product_ids)
+        _category_sales_product_count = len(division_totals)
 
         # ---- Expenses vs comparison period, by account ----
+        # Both periods resolved in one pass over the summary table.
         _t0 = time.perf_counter()
-        exp_lines = request.env['account.move.line'].sudo().read_group(
-            [('account_id.account_type', 'in', ['expense', 'expense_direct_cost']),
-             ('parent_state', '=', 'posted'),
-             ('company_id', 'in', company_ids),
-             ('date', '>=', period_start), ('date', '<=', period_end)],
-            ['balance:sum'], ['account_id'])
-        timings.append(('expenses_table_current', time.perf_counter() - _t0))
-        _t0 = time.perf_counter()
-        cmp_exp_lines = request.env['account.move.line'].sudo().read_group(
-            [('account_id.account_type', 'in', ['expense', 'expense_direct_cost']),
-             ('parent_state', '=', 'posted'),
-             ('company_id', 'in', company_ids),
-             ('date', '>=', cmp_start), ('date', '<=', cmp_end)],
-            ['balance:sum'], ['account_id'])
-        timings.append(('expenses_table_cmp', time.perf_counter() - _t0))
-        cmp_by_account = {r['account_id'][0]: r['balance'] for r in cmp_exp_lines if r['account_id']}
+        cr.execute(
+            """
+            SELECT account_id,
+                   COALESCE(SUM(CASE WHEN date BETWEEN %(ps)s AND %(pe)s THEN amount ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN date BETWEEN %(cs)s AND %(ce)s THEN amount ELSE 0 END), 0)
+            FROM finance_dashboard_expense_daily
+            WHERE company_id = ANY(%(companies)s)
+              AND (date BETWEEN %(ps)s AND %(pe)s OR date BETWEEN %(cs)s AND %(ce)s)
+            GROUP BY account_id
+            """,
+            {'companies': list(company_ids), 'ps': period_start, 'pe': period_end,
+             'cs': cmp_start, 'ce': cmp_end},
+        )
+        _exp_rows = cr.fetchall()
+        timings.append(('expenses_table_summary', time.perf_counter() - _t0))
+
+        _acc_names = {}
+        if _exp_rows:
+            for a in request.env['account.account'].sudo().browse([r[0] for r in _exp_rows]):
+                _acc_names[a.id] = a.display_name
         expenses_table = []
-        for r in exp_lines:
-            if not r['account_id']:
+        for acc_id, this_amt, cmp_amt in _exp_rows:
+            this_amt = float(this_amt or 0.0)
+            cmp_amt = float(cmp_amt or 0.0)
+            if not this_amt and not cmp_amt:
                 continue
-            acc_id, acc_name = r['account_id']
-            this_amt = r['balance'] or 0.0
-            cmp_amt = cmp_by_account.get(acc_id, 0.0)
             expenses_table.append({
-                'name': acc_name,
+                'name': _acc_names.get(acc_id, 'Unknown'),
                 'this_month': round(this_amt, 2),
                 'last_month': round(cmp_amt, 2),
                 'variance': round(this_amt - cmp_amt, 2),
             })
+        expenses_table.sort(key=lambda e: abs(e['this_month']), reverse=True)
 
         # TEMPORARY PROFILING - remove this whole block along with the
         # t_request_start/timings/_timed setup above and every _timed(...)
@@ -588,8 +890,26 @@ class FinanceDashboardController(http.Controller):
             " | ".join(f"{name}={elapsed:.3f}s" for name, elapsed in timings),
         )
 
+        # Reporting vintage: what period this represents and when the tables
+        # behind it were last rebuilt. Both are needed - back-dated entries can
+        # still change yesterday's figures right up until the next refresh, so
+        # the cutoff date alone does not identify the data.
+        _vintage = self._reporting_vintage(company_ids)
+        _refreshed_at = _vintage.get('refreshed_at')
+        _refreshed_str = _refreshed_at.strftime('%Y-%m-%d %H:%M') if _refreshed_at else None
+        _vintage_label = (
+            f"Accounting data through {as_of.isoformat()}"
+            + (f", reporting tables refreshed {_refreshed_str}" if _refreshed_str
+               else ", reporting refresh time unknown")
+        )
+
         return {
             'as_of': f"{as_of.strftime('%d %b %Y')} {datetime.now().strftime('%I:%M %p')}",
+            'reporting_cutoff': as_of.isoformat(),
+            'reporting_lag_days': self.REPORTING_LAG_DAYS,
+            'reporting_refreshed_at': _refreshed_str,
+            'reporting_refresh_ok': _vintage.get('all_ok'),
+            'reporting_vintage': _vintage_label,
             'period': period,
             'period_label': period_label,
             'period_name': period_name,
@@ -608,8 +928,12 @@ class FinanceDashboardController(http.Controller):
             'net_profit_change': self._pct_change(net_profit, cmp_net_profit),
             'total_ar': round(total_ar, 2),
             'total_ar_change': self._pct_change(total_ar, cmp_total_ar),
-            'total_ap': round(abs(total_ap), 2),
-            'total_ap_change': self._pct_change(abs(total_ap), abs(cmp_total_ap)),
+            # Reported exactly as Odoo's Balance Sheet Payables line does
+            # (its '-sum' subformula is already applied in _ar_ap_aggregate),
+            # so this can legitimately be negative when the payable accounts
+            # sit in a net debit position. No abs() - that would hide the sign.
+            'total_ap': round(total_ap, 2),
+            'total_ap_change': self._pct_change(total_ap, cmp_total_ap),
             'receivable_90_plus': round(buckets['90+'], 2),
             'receivable_90_plus_change': self._pct_change(buckets['90+'], cmp_90_plus),
             'total_expenses': round(period_opex, 2),

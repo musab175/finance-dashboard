@@ -47,7 +47,7 @@
                         <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.net_profit_change)}}" t-esc="pct(state.data.net_profit_change) + ' vs ' + state.data.compare_label"/>
                     </div>
                     <div class="fd_kpi_card">
-                        <div class="fd_kpi_label"><i class="fa fa-arrow-circle-o-down" title="Receivables"/> Total Receivables (AR)</div>
+                        <div class="fd_kpi_label" title="General-ledger balance on trade receivable accounts, as of the selected date. A single group company also holds the mirror leg of its intercompany positions, so a standalone figure can be negative; those legs offset when companies are consolidated."><i class="fa fa-arrow-circle-o-down" title="Receivables"/> Total Receivables (AR)</div>
                         <div class="fd_kpi_value" t-esc="fmt(state.data.total_ar)"/>
                         <div t-attf-class="fd_kpi_change fd_trend_{{trend(state.data.total_ar_change)}}" t-esc="pct(state.data.total_ar_change) + ' vs ' + state.data.compare_label"/>
                     </div>
@@ -57,12 +57,12 @@
                         <div t-attf-class="fd_kpi_change fd_trend_{{inverseTrend(state.data.receivable_90_plus_change)}}" t-esc="pct(state.data.receivable_90_plus_change) + ' vs ' + state.data.compare_label"/>
                     </div>
                     <div class="fd_kpi_card">
-                        <div class="fd_kpi_label"><i class="fa fa-arrow-circle-o-up" title="Payables"/> Total Payables (AP)</div>
+                        <div class="fd_kpi_label" title="General-ledger balance on trade payable accounts, as of the selected date, shown on Odoo's Balance Sheet sign convention. A single group company also holds the mirror leg of its intercompany positions; those legs offset when companies are consolidated."><i class="fa fa-arrow-circle-o-up" title="Payables"/> Total Payables (AP)</div>
                         <div class="fd_kpi_value" t-esc="fmt(state.data.total_ap)"/>
                         <div t-attf-class="fd_kpi_change fd_trend_{{inverseTrend(state.data.total_ap_change)}}" t-esc="pct(state.data.total_ap_change) + ' vs ' + state.data.compare_label"/>
                     </div>
                     <div class="fd_kpi_card">
-                        <div class="fd_kpi_label"><i class="fa fa-list-alt" title="Expenses"/> Expenses vs <t t-esc="state.data.compare_label"/></div>
+                        <div class="fd_kpi_label"><i class="fa fa-list-alt" title="Expenses"/> MTD Operating Expenses</div>
                         <div class="fd_kpi_value" t-esc="fmt(state.data.total_expenses)"/>
                         <div t-attf-class="fd_kpi_change fd_trend_{{inverseTrend(state.data.total_expenses_change)}}" t-esc="pct(state.data.total_expenses_change) + ' vs ' + state.data.compare_label"/>
                     </div>
@@ -85,7 +85,7 @@
                         </div>
                     </div>
                     <div class="fd_chart_card">
-                        <div class="fd_card_title">Sales by Product Category</div>
+                        <div class="fd_card_title">Sales by Division</div>
                         <div class="fd_category_body" t-if="state.data.category_sales.length">
                             <div class="fd_chart_canvas_wrap fd_donut_wrap">
                                 <canvas t-ref="categoryChart"/>
@@ -165,7 +165,7 @@
                         <table class="fd_table">
                             <tr><th>Days</th><th>Amount</th><th>%</th></tr>
                             <tr t-foreach="state.data.aging" t-as="a" t-key="a.range">
-                                <td t-esc="a.range + ' Days'"/>
+                                <td t-esc="a.range === 'current' ? 'Current (Not Yet Due)' : a.range + ' Days'"/>
                                 <td t-esc="fmt(a.amount)"/>
                                 <td t-esc="a.pct + '%'"/>
                             </tr>
