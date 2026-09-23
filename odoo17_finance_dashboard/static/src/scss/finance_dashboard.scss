@@ -14,7 +14,10 @@
         .fd_header_left { display: flex; align-items: baseline; gap: 12px; }
         h2 { margin: 0; font-weight: 600; }
         .fd_as_of { color: #8a8a9a; font-size: 12px; }
-        .fd_live { color: #16a34a; }
+        // Data-freshness badge, one colour per state of reporting_refresh_ok.
+        .fd_live    { color: #16a34a; }  // true  - refreshed cleanly
+        .fd_stale   { color: #d97706; }  // false - a refresh reported a failure
+        .fd_unknown { color: #8a8a9a; }  // null  - no coverage rows yet
     }
 
     .fd_toolbar {

@@ -7,7 +7,25 @@
             <div class="fd_header">
                 <div class="fd_header_left">
                     <h2>Finance Dashboard</h2>
-                    <span class="fd_as_of" t-if="state.data">As of <t t-esc="state.data.as_of"/> <span class="fd_live">● Live</span></span>
+                    <!-- The badge reports the DATA's freshness, not the page's.
+                         It used to read a hardcoded green "● Live", which was
+                         wrong under T-1 semantics: the reporting layer serves
+                         data through the previous completed cutoff and is
+                         rebuilt once a day, so "Live" told a finance user the
+                         opposite of the truth - and stayed green even when the
+                         refresh had failed. reporting_refresh_ok is tri-state:
+                         true (refreshed cleanly), false (a refresh reported a
+                         failure) and null (no coverage rows yet - what a
+                         freshly built database shows before its first refresh),
+                         so all three are rendered distinctly. -->
+                    <span class="fd_as_of" t-if="state.data">As of <t t-esc="state.data.as_of"/>
+                        <span t-if="state.data.reporting_refresh_ok === true" class="fd_live"
+                              t-att-title="state.data.reporting_vintage">● Data through <t t-esc="state.data.reporting_cutoff"/></span>
+                        <span t-elif="state.data.reporting_refresh_ok === false" class="fd_stale"
+                              t-att-title="state.data.reporting_vintage">▲ Refresh failed — data through <t t-esc="state.data.reporting_cutoff"/></span>
+                        <span t-else="" class="fd_unknown"
+                              t-att-title="state.data.reporting_vintage">◦ Data through <t t-esc="state.data.reporting_cutoff"/> (freshness unknown)</span>
+                    </span>
                 </div>
                 <div class="fd_toolbar">
                     <input type="date" class="fd_control" name="asOf" t-att-value="state.asOf" t-on-change="onFilterChange"/>
