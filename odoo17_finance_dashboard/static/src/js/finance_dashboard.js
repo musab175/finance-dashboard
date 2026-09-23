@@ -160,6 +160,25 @@ openOverdueCustomers() {
         return value > 0 ? "up" : value < 0 ? "down" : "flat";
     }
 
+    // Whether the Sales Analysis chart has anything worth drawing.
+    //
+    // Unlike category_sales - which is sparse, so an empty period gives a
+    // zero-length array a `.length` check can catch - sales_trend is always
+    // dense: the backend returns one bucket per day in the period whether or
+    // not anything was sold, so `labels.length` is never 0 and cannot detect
+    // an empty period. A holding company like GFT Parent therefore produced a
+    // flat line on a -1..1 axis, which reads as a broken chart rather than as
+    // "no sales".
+    //
+    // Both series are checked: if this period is empty but the comparison
+    // period is not, the chart still carries real information (the drop to
+    // zero) and must be drawn.
+    hasSalesTrend() {
+        const t = this.state.data && this.state.data.sales_trend;
+        if (!t) return false;
+        return (t.actual || []).some((v) => v) || (t.last_month || []).some((v) => v);
+    }
+
     // For metrics where a rise is unfavorable (payables, overdue receivables,
     // expenses, COGS): flip the color so "more" still reads as red.
     inverseTrend(value) {

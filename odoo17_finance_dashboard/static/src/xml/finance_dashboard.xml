@@ -80,9 +80,10 @@
                             <div class="fd_card_title">Sales Analysis</div>
                             <span class="fd_badge" t-esc="state.data.period_name"/>
                         </div>
-                        <div class="fd_chart_canvas_wrap">
+                        <div class="fd_chart_canvas_wrap" t-if="hasSalesTrend()">
                             <canvas t-ref="salesChart"/>
                         </div>
+                        <div t-else="" class="fd_empty">No sales in this period</div>
                     </div>
                     <div class="fd_chart_card">
                         <div class="fd_card_title">Sales by Division</div>
