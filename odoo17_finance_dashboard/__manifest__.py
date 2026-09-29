@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Finance Dashboard',
-    'version': '17.0.4.0.0',
+    'version': '17.0',
     'category': 'Accounting/Accounting',
     'summary': 'Custom KPI finance dashboard (Cash & Bank, Sales, AR/AP, P&L, Aging)',
     'author': 'Your Company',
