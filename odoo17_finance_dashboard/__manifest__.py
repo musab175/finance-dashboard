@@ -30,9 +30,9 @@
     'assets': {
         'web.assets_backend': [
             ('include', 'web.chartjs_lib'),
-            'finance_dashboard/static/src/js/finance_dashboard.js',
-            'finance_dashboard/static/src/xml/finance_dashboard.xml',
-            'finance_dashboard/static/src/scss/finance_dashboard.scss',
+            'odoo17_finance_dashboard/static/src/js/finance_dashboard.js',
+            'odoo17_finance_dashboard/static/src/xml/finance_dashboard.xml',
+            'odoo17_finance_dashboard/static/src/scss/finance_dashboard.scss',
         ],
     },
     'installable': True,
