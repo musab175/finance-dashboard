@@ -33,23 +33,23 @@ src_snap AS (
     SUM(CASE WHEN aa.account_type='asset_receivable' AND NOT aa.non_trade
              THEN aml.balance ELSE 0 END)                                                     AS ar,
     SUM(CASE WHEN aa.account_type='asset_receivable' AND NOT aa.non_trade
-                  AND aml.journal_id = ANY((SELECT j FROM ic)) THEN aml.balance ELSE 0 END)    AS ar_ic,
+                  AND aml.journal_id IN (SELECT account_journal_id FROM account_journal_account_journal_group_rel) THEN aml.balance ELSE 0 END)    AS ar_ic,
     SUM(CASE WHEN aa.account_type='liability_payable' AND NOT aa.non_trade
              THEN aml.balance ELSE 0 END)                                                     AS ap,
     SUM(CASE WHEN aa.account_type='liability_payable' AND NOT aa.non_trade
-                  AND aml.journal_id = ANY((SELECT j FROM ic)) THEN aml.balance ELSE 0 END)    AS ap_ic,
+                  AND aml.journal_id IN (SELECT account_journal_id FROM account_journal_account_journal_group_rel) THEN aml.balance ELSE 0 END)    AS ap_ic,
     SUM(CASE WHEN aa.account_type='asset_current'
                   OR (aa.account_type='asset_receivable' AND aa.non_trade)
              THEN aml.balance ELSE 0 END)                                                     AS oca,
     SUM(CASE WHEN (aa.account_type='asset_current'
                    OR (aa.account_type='asset_receivable' AND aa.non_trade))
-                  AND aml.journal_id = ANY((SELECT j FROM ic)) THEN aml.balance ELSE 0 END)    AS oca_ic,
+                  AND aml.journal_id IN (SELECT account_journal_id FROM account_journal_account_journal_group_rel) THEN aml.balance ELSE 0 END)    AS oca_ic,
     SUM(CASE WHEN aa.account_type IN ('liability_current','liability_credit_card')
                   OR (aa.account_type='liability_payable' AND aa.non_trade)
              THEN aml.balance ELSE 0 END)                                                     AS ocl,
     SUM(CASE WHEN (aa.account_type IN ('liability_current','liability_credit_card')
                    OR (aa.account_type='liability_payable' AND aa.non_trade))
-                  AND aml.journal_id = ANY((SELECT j FROM ic)) THEN aml.balance ELSE 0 END)    AS ocl_ic
+                  AND aml.journal_id IN (SELECT account_journal_id FROM account_journal_account_journal_group_rel) THEN aml.balance ELSE 0 END)    AS ocl_ic
   FROM account_move_line aml JOIN account_account aa ON aa.id=aml.account_id
   WHERE aml.parent_state='posted' AND aml.date <= DATE :'as_of'
 ), rep_snap AS (
@@ -62,10 +62,10 @@ src_snap AS (
   SELECT
    -SUM(CASE WHEN aa.account_type='income' THEN aml.balance ELSE 0 END)                        AS sales,
    -SUM(CASE WHEN aa.account_type='income'
-                  AND aml.journal_id = ANY((SELECT j FROM ic)) THEN aml.balance ELSE 0 END)     AS sales_ic,
+                  AND aml.journal_id IN (SELECT account_journal_id FROM account_journal_account_journal_group_rel) THEN aml.balance ELSE 0 END)     AS sales_ic,
     SUM(CASE WHEN aa.account_type='expense_direct_cost' THEN aml.balance ELSE 0 END)           AS cogs,
     SUM(CASE WHEN aa.account_type='expense_direct_cost'
-                  AND aml.journal_id = ANY((SELECT j FROM ic)) THEN aml.balance ELSE 0 END)     AS cogs_ic,
+                  AND aml.journal_id IN (SELECT account_journal_id FROM account_journal_account_journal_group_rel) THEN aml.balance ELSE 0 END)     AS cogs_ic,
     SUM(CASE WHEN aa.account_type='expense' THEN aml.balance ELSE 0 END)                       AS opex,
    -SUM(CASE WHEN aa.account_type='income_other' THEN aml.balance ELSE 0 END)                  AS other_income,
     SUM(CASE WHEN aa.account_type='expense_depreciation' THEN aml.balance ELSE 0 END)          AS depreciation
