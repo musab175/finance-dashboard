@@ -220,10 +220,12 @@ class FinanceDashboardController(http.Controller):
     #   snapshot column across a range would double-count.
     # ------------------------------------------------------------------ #
 
-    _FLOW_COLUMNS = ('sales', 'cogs', 'opex', 'other_income', 'depreciation')
+    _FLOW_COLUMNS = ('sales', 'cogs', 'opex', 'other_income', 'depreciation',
+                     'sales_ic', 'cogs_ic')
     _SNAPSHOT_COLUMNS = (
         'cash_bank_delta', 'ar_delta', 'ap_delta', 'ar_ic_delta', 'ap_ic_delta',
         'other_current_assets_delta', 'other_current_liabilities_delta',
+        'other_current_assets_ic_delta', 'other_current_liabilities_ic_delta',
     )
 
     def _prefetch_summary(self, company_ids, ranges, snap_dates):

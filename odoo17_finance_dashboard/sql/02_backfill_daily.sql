@@ -5,7 +5,9 @@
 INSERT INTO finance_dashboard_daily (
     company_id, date, sales, cogs, opex, other_income, depreciation,
     cash_bank_delta, ar_delta, ap_delta, ar_ic_delta, ap_ic_delta,
-    other_current_assets_delta, other_current_liabilities_delta)
+    other_current_assets_delta, other_current_liabilities_delta,
+    sales_ic, cogs_ic,
+    other_current_assets_ic_delta, other_current_liabilities_ic_delta)
 SELECT
     aml.company_id,
     aml.date,
@@ -33,6 +35,29 @@ SELECT
      -- Stored as raw SUM(balance); Odoo displays this line as -sum.
      SUM(CASE WHEN aa.account_type IN ('liability_current','liability_credit_card')
                OR (aa.account_type='liability_payable' AND aa.non_trade)
+              THEN aml.balance ELSE 0 END),
+     -- ---- IC parity columns (2026-10-01) -------------------------------
+     -- Identical journal predicate to ar_ic_delta/ap_ic_delta above: a line
+     -- counts as intercompany when its journal belongs to a journal group.
+     -- Signs mirror each base column so `base - ic` is always the
+     -- journal-filtered figure Odoo shows.
+    -SUM(CASE WHEN aa.account_type='income'
+               AND aml.journal_id IN (SELECT r.account_journal_id
+                       FROM account_journal_account_journal_group_rel r)
+              THEN aml.balance ELSE 0 END),
+     SUM(CASE WHEN aa.account_type='expense_direct_cost'
+               AND aml.journal_id IN (SELECT r.account_journal_id
+                       FROM account_journal_account_journal_group_rel r)
+              THEN aml.balance ELSE 0 END),
+     SUM(CASE WHEN (aa.account_type='asset_current'
+                    OR (aa.account_type='asset_receivable' AND aa.non_trade))
+               AND aml.journal_id IN (SELECT r.account_journal_id
+                       FROM account_journal_account_journal_group_rel r)
+              THEN aml.balance ELSE 0 END),
+     SUM(CASE WHEN (aa.account_type IN ('liability_current','liability_credit_card')
+                    OR (aa.account_type='liability_payable' AND aa.non_trade))
+               AND aml.journal_id IN (SELECT r.account_journal_id
+                       FROM account_journal_account_journal_group_rel r)
               THEN aml.balance ELSE 0 END)
 FROM account_move_line aml
 JOIN account_account aa ON aa.id = aml.account_id
@@ -68,4 +93,8 @@ ON CONFLICT (company_id, date) DO UPDATE SET
     ar_ic_delta                     = EXCLUDED.ar_ic_delta,
     ap_ic_delta                     = EXCLUDED.ap_ic_delta,
     other_current_assets_delta      = EXCLUDED.other_current_assets_delta,
-    other_current_liabilities_delta = EXCLUDED.other_current_liabilities_delta;
+    other_current_liabilities_delta = EXCLUDED.other_current_liabilities_delta,
+    sales_ic                        = EXCLUDED.sales_ic,
+    cogs_ic                         = EXCLUDED.cogs_ic,
+    other_current_assets_ic_delta      = EXCLUDED.other_current_assets_ic_delta,
+    other_current_liabilities_ic_delta = EXCLUDED.other_current_liabilities_ic_delta;

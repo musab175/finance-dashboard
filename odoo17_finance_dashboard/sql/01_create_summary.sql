@@ -31,6 +31,12 @@ CREATE TABLE finance_dashboard_daily (
     opex                            numeric(18,2) NOT NULL DEFAULT 0,
     other_income                    numeric(18,2) NOT NULL DEFAULT 0,
     depreciation                    numeric(18,2) NOT NULL DEFAULT 0,
+    -- IC parity (2026-10-01): the intercompany-journal portion of the two
+    -- flow measures, stored SEPARATELY exactly as ar_ic_delta/ap_ic_delta are,
+    -- so the dashboard can reproduce Odoo's journal-filtered P&L by subtraction
+    -- without re-scanning the ledger. Same sign convention as their base column.
+    sales_ic                        numeric(18,2) NOT NULL DEFAULT 0,
+    cogs_ic                         numeric(18,2) NOT NULL DEFAULT 0,
 
     -- SNAPSHOT DELTAS (cumulative-sum to a date; never sum as a range)
     cash_bank_delta                 numeric(18,2) NOT NULL DEFAULT 0,
@@ -40,6 +46,12 @@ CREATE TABLE finance_dashboard_daily (
     ap_ic_delta                     numeric(18,2) NOT NULL DEFAULT 0,
     other_current_assets_delta      numeric(18,2) NOT NULL DEFAULT 0,
     other_current_liabilities_delta numeric(18,2) NOT NULL DEFAULT 0,
+    -- IC parity (2026-10-01): Balance Sheet lines 55 and 61 carry intercompany
+    -- journal activity that ar_ic_delta/ap_ic_delta do not cover. Measured gap at
+    -- 2026-03-18 consolidated: Current Assets 13,200,505.61 and Current
+    -- Liabilities 13,194,411.79 against Odoo's journal-filtered figures.
+    other_current_assets_ic_delta      numeric(18,2) NOT NULL DEFAULT 0,
+    other_current_liabilities_ic_delta numeric(18,2) NOT NULL DEFAULT 0,
 
     CONSTRAINT finance_dashboard_daily_pk PRIMARY KEY (company_id, date)
 );
