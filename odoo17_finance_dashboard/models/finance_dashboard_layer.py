@@ -35,7 +35,22 @@ FOUR THINGS THE ORM CANNOT EXPRESS, AND HOW EACH IS HANDLED
 _log_access = False throughout: create_uid/create_date/write_uid/write_date on
 500k rows is pure overhead for tables nothing writes through the ORM.
 """
+import logging
+import os
+import time
+
 from odoo import fields, models
+
+_logger = logging.getLogger(__name__)
+
+# The three stages 05_refresh_all.sql runs, in its order. 01_create_summary.sql
+# is DELIBERATELY ABSENT: it DROPs and recreates the tables and is a one-time
+# provisioning step, never part of a refresh.
+SQL_STAGES = (
+    '02_backfill_daily.sql',
+    '03_backfill_arap.sql',
+    '04_backfill_expense_and_derived.sql',
+)
 
 AMT = dict(digits=(18, 2), required=True, default=0.0)
 
@@ -85,6 +100,57 @@ class FinanceDashboardDaily(models.Model):
             'other_current_liabilities_delta', 'other_current_assets_ic_delta',
             'other_current_liabilities_ic_delta',
         ])
+
+    def refresh_full(self):
+        """Rebuild the reporting layer by executing the validated SQL unchanged.
+
+        Reads 02/03/04 from sql/ and runs each through this cursor. The SQL is
+        the SINGLE SOURCE OF TRUTH - nothing here reimplements any aggregation.
+        This is a second CALLER for the same scripts psql already runs via
+        05_refresh_all.sql, not a second implementation.
+
+        WHAT IS DELIBERATELY NOT HERE
+          01_create_summary.sql - DROPs and recreates the tables. One-time
+              provisioning, never a refresh. Including it would destroy data.
+          VACUUM - "cannot run inside a transaction block", and this method
+              always runs inside one. It stays in 05_refresh_daily.sh on a
+              separate connection. After calling this, VACUUM (ANALYZE) the four
+              churned tables separately; 03 leaves ~500k dead tuples per run.
+
+        TRANSACTION: this method does NOT commit. The caller owns that, which is
+        what keeps the whole refresh atomic - readers keep seeing the previous
+        complete vintage until the caller commits, and a failure anywhere rolls
+        every stage back together. Note `odoo shell` does NOT auto-commit: call
+        env.cr.commit() explicitly, or nothing is persisted.
+
+        03's CREATE TEMP TABLE ... ON COMMIT DROP is safe here BY CONSTRUCTION -
+        Odoo's cursor is always transactional, so the staging table cannot be
+        dropped early. Under psql that depends on remembering --single-transaction.
+
+        VALIDATED 2026-10-08 on gftuae (full ~30M-line ledger, inside a
+        transaction that was rolled back): all three stages executed unmodified,
+        197.56s total, and all 17 digest values were IDENTICAL to the state built
+        by psql - proving the two execution paths agree.
+
+        :return: list of (stage_filename, elapsed_seconds)
+        """
+        sql_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'sql')
+        timings = []
+        for stage in SQL_STAGES:
+            path = os.path.join(sql_dir, stage)
+            with open(path) as handle:
+                statements = handle.read()
+            started = time.time()
+            self.env.cr.execute(statements)
+            elapsed = round(time.time() - started, 2)
+            timings.append((stage, elapsed))
+            _logger.info("Finance Dashboard refresh: %s completed in %.2fs",
+                         stage, elapsed)
+        total = round(sum(t for _, t in timings), 2)
+        _logger.info("Finance Dashboard refresh: all stages staged in %.2fs "
+                     "(NOT committed - the caller must commit)", total)
+        return timings
 
 
 class FinanceDashboardArapDaily(models.Model):
