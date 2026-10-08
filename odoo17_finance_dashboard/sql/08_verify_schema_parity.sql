@@ -63,11 +63,14 @@ SELECT column_name, data_type, numeric_precision,
    AND column_name IN ('ar_amount','ap_amount') ORDER BY 1;
 
 \echo '=== 4. required indexes / unique constraints ==='
+-- NOTE: finance_dashboard_arap_partner_idx is created by 04_backfill_expense_and_derived.sql,
+-- NOT at provisioning time. MISSING is CORRECT before the first refresh has run,
+-- and only a failure if it is still missing after 05_refresh_all.sql.
 WITH required(idx, tbl, why) AS (VALUES
     ('finance_dashboard_arap_uk','finance_dashboard_arap_daily','grain key for 03 merge (COALESCE-normalised)'),
     ('finance_dashboard_arap_daily_idx','finance_dashboard_arap_daily','read path'),
     ('finance_dashboard_aging_idx','finance_dashboard_aging_daily','covering index, INCLUDE'),
-    ('finance_dashboard_arap_partner_idx','finance_dashboard_arap_daily','created by 04, top-5 partners'))
+    ('finance_dashboard_arap_partner_idx','finance_dashboard_arap_daily','created by 04 - MISSING is OK before first refresh'))
 SELECT r.idx, r.why,
        CASE WHEN i.indexname IS NULL THEN 'MISSING' ELSE 'PASS' END AS status
   FROM required r LEFT JOIN pg_indexes i

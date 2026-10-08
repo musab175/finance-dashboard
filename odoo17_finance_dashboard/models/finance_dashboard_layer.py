@@ -139,6 +139,15 @@ class FinanceDashboardAgingDaily(models.Model):
     ap_amount = fields.Float()
 
     def init(self):
+        # fields.Float() WITHOUT digits maps to `double precision`, not numeric.
+        # That is binary floating point: it cannot represent 0.1 exactly, and
+        # this table is SUMmed across ~39k rows per read, so the error
+        # accumulates and bucket totals would never reconcile exactly against
+        # arap_daily. 01_create_summary.sql uses unconstrained `numeric`
+        # deliberately (SUM of numeric(18,2) yields unconstrained numeric), so
+        # force that type here. Caught by 08_verify_schema_parity.sql on its
+        # first run against a real database, 2026-10-08.
+        _force_type(self, ['ar_amount', 'ap_amount'], 'numeric', expect=(None, None))
         self.env.cr.execute("""
             CREATE INDEX IF NOT EXISTS finance_dashboard_aging_idx
                 ON finance_dashboard_aging_daily (company_id, date)
@@ -186,6 +195,31 @@ class FinanceDashboardCoverage(models.Model):
         'finance_dashboard_coverage_uk', 'UNIQUE (company_id)',
         'One coverage row per company.',
     )]
+
+
+def _force_type(model, columns, pgtype, expect):
+    """Pin columns to an exact PostgreSQL type, whatever the ORM produced.
+
+    `expect` is the (precision, scale) pair that means "already correct" -
+    (18, 2) for money columns, (None, None) for unconstrained numeric.
+    Idempotent; PostgreSQL skips the rewrite when the type already matches.
+    """
+    for col in columns:
+        model.env.cr.execute("""
+            SELECT numeric_precision, numeric_scale, data_type
+              FROM information_schema.columns
+             WHERE table_name = %s AND column_name = %s
+        """, (model._table, col))
+        row = model.env.cr.fetchone()
+        if not row:
+            continue
+        precision, scale, data_type = row
+        if (precision, scale) == expect and data_type == 'numeric':
+            continue
+        model.env.cr.execute(
+            'ALTER TABLE "%s" ALTER COLUMN "%s" TYPE %s'
+            % (model._table, col, pgtype)
+        )
 
 
 def _force_numeric(model, columns):
