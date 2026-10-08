@@ -1,3 +1,8 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_finance_dashboard_category_sales_daily,finance.dashboard.category.sales.daily,model_finance_dashboard_category_sales_daily,base.group_user,1,1,1,1
 access_finance_dashboard_category_sales_coverage,finance.dashboard.category.sales.coverage,model_finance_dashboard_category_sales_coverage,base.group_user,1,1,1,1
+access_finance_dashboard_daily,finance.dashboard.daily,model_finance_dashboard_daily,base.group_user,1,0,0,0
+access_finance_dashboard_arap_daily,finance.dashboard.arap.daily,model_finance_dashboard_arap_daily,base.group_user,1,0,0,0
+access_finance_dashboard_aging_daily,finance.dashboard.aging.daily,model_finance_dashboard_aging_daily,base.group_user,1,0,0,0
+access_finance_dashboard_expense_daily,finance.dashboard.expense.daily,model_finance_dashboard_expense_daily,base.group_user,1,0,0,0
+access_finance_dashboard_coverage,finance.dashboard.coverage,model_finance_dashboard_coverage,base.group_user,1,0,0,0
